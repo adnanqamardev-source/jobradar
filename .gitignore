@@ -19,6 +19,9 @@ playwright-report/
 test-results/
 blob-report/
 
+# local tooling binaries (fetched by `pnpm secret:install`, never committed)
+tools/
+
 # vercel
 .vercel/
 

@@ -100,6 +100,17 @@ something "should" exist.
 | A DB table exists | `list_tables` via Supabase MCP | assuming a migration covered it |
 | An MCP server is live | `opencode mcp list` | the tool catalog listing it |
 | Tests pass | pasted `pnpm test` output | "tests pass" |
+| **A tool is NOT installed** | **every install location**: `node_modules/.bin/`, `npm root -g`, `pnpm bin -g`, scoop/choco/winget paths, the uninstall registry | **`Get-Command` / `which` alone — a PATH miss is not an absence** |
+
+**The PATH trap, stated once because it has now cost two false statements in one session.**
+`Get-Command` and `which` only answer *"is it on this shell's PATH?"* A project dependency lives
+in `node_modules/.bin` and a per-user install lives outside `Program Files`; neither is on a
+shell that started before the install. Both look identical to "not installed", and both were
+wrong here — `supabase` and Docker Desktop were installed the whole time.
+
+Absence is the hardest claim to verify and the easiest to get wrong. Before writing "X is not
+installed", check the places a thing can legitimately hide. If you have not checked them, write
+"I could not find X in these locations" — never "X is not installed".
 
 **"Up to date" against zero migrations means nothing was applied.** Treat any success message
 whose scope is unverified as a non-answer.

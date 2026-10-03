@@ -110,15 +110,46 @@ RLS is **enabled on every table** in the schema. Default posture: **deny all**, 
 create function auth.uid() returns uuid;          -- Supabase built-in
 
 -- true when the JWT role claim = 'admin'
+-- Fixed 2026-10-03: the inner call is wrapped in (select ...). Do not unwrap it.
 create function is_admin() returns boolean
   language sql stable as $$
-  select coalesce(auth.jwt() ->> 'role', 'user') = 'admin'
+  select coalesce((select auth.jwt()) ->> 'role', 'user') = 'admin'
 $$;
 ```
+
+**Why the `(select …)` wrapper is not optional.** Postgres normally re-runs a function once per
+row it checks. Wrapping the call in `select` tells Postgres to run it **once per query** and
+reuse the answer. Without the wrapper, every row scanned re-reads and re-parses the JWT. On a
+feed with thousands of rows that is the difference between a fast page and a timeout.
+
+**This applies everywhere, not just here.** Every `auth.uid()` and `auth.jwt()` in a policy in
+§4.2 must be written as `(select auth.uid())` for the same reason.
+
+### 4.1a Force RLS — do not skip this
+
+**Added 2026-10-03.** §4.2 turns RLS *on* for every table. That is not sufficient on its own.
+
+In Postgres, the **owner of a table is exempt** from its own row-level security. So if a table
+and its policies are created by the same role that later queries it, that role sees every row
+regardless of the policies. The policies look correct in `pg_policies` and do nothing.
+
+The fix is one extra line per table:
+
+```sql
+alter table jobs enable row level security;    -- turn the policies on
+alter table jobs force  row level security;     -- make them bind the owner too
+```
+
+`service_role` is unaffected, because it has its own bypass role. Every table in §4.2 gets both
+lines.
 
 ### 4.2 Policy table
 
 **Legend:** `S` = SELECT · `I` = INSERT · `U` = UPDATE · `D` = DELETE
+
+**Every table below gets both `enable row level security` and `force row level security`** —
+see §4.1a for why the second one is not optional. Every `auth.uid()` / `auth.jwt()` in the
+Rule column is written as `(select auth.uid())` — see §4.1.
 
 | Table | Who | S | I | U | D | Rule (written out) |
 |---|---|---|---|---|---|---|

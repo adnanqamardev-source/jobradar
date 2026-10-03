@@ -62,9 +62,9 @@ These tickets must be completed before Track BE branches off.
 
 | ID | Title | Origin Ticket | Priority | Deliverable |
 |---|---|---|---|---|
-| **FND-001** | Repo Scaffold & Strict Tooling | `ENG-001` | MUST | Monorepo/project structure, TypeScript strict configs, linting, Vitest & Playwright configs. |
-| **FND-002** | Core Database Schema & Migrations | `ENG-003` | MUST | `supabase/migrations/0001_init.sql` containing all 16 enums, 20 tables, pgvector, pg_cron, and seed data. |
-| **FND-003** | Row-Level Security (RLS) & Policies | `ENG-004` | MUST | RLS policies on all tables, `is_admin()` helper, security integration tests. |
+| **FND-001** | Repo Scaffold & Strict Tooling | `ENG-001` | MUST | Project structure, TypeScript strict configs, linting, Vitest & Playwright configs. **Also still open:** a root `app/layout.tsx` + placeholder page so `/` renders instead of a 404; Tailwind 4 CSS-first wiring ([02](./02-technical-architecture.md) §4.1); `eslint-config-next` pinned to match Next; a secret scanner that actually runs. Verified incomplete 2026-10-03 — see [07](./07-implementation-plan.md) §2.1. |
+| **FND-002** | Core Database Schema & Migrations | `ENG-003` | MUST | `supabase/migrations/0001_init.sql` containing all 13 enums, 19 tables, pgvector, pg_cron, and seed data. Must include the `halfvec` expression index on `jobs.embedding` ([02](./02-technical-architecture.md) §5.4) and an index on every foreign key in §5.10. |
+| **FND-003** | Row-Level Security (RLS) & Policies | `ENG-004` | MUST | RLS policies on all tables using the `(select auth.uid())` wrapper, `force row level security` on every table, `is_admin()` helper, security integration tests. See [03](./03-security-and-access.md) §4.1 and §4.1a. |
 | **FND-004** | Structured Logger, Errors & Sentry | `ENG-005` | MUST | `lib/logger.ts` with secret redaction, `lib/errors/` error taxonomy, Sentry init. |
 | **FND-005** | CI Pipeline & Client Secret Scanner | `ENG-006` | MUST | GitHub Actions workflow for lint, test, build, and client bundle secret grep. |
 

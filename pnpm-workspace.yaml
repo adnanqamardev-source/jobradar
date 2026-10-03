@@ -1,3 +1,15 @@
+# pnpm 12 reads its settings from here, not from the `pnpm` field in package.json.
+#
+# `allowBuilds` is an allow-list for dependency install scripts. A package not
+# listed here is treated as unreviewed and, because `strictDepBuilds` defaults to
+# true, makes `pnpm install` exit non-zero with ERR_PNPM_IGNORED_BUILDS.
+#
+# This replaced `onlyBuiltDependencies`, which pnpm 11 removed. Using the old name
+# is silently ignored — the install still fails with no hint that the key is wrong.
+#
+#   simple-git-hooks — writes .git/hooks/* on install, which is the whole point
+#   esbuild           — postinstall check for its platform binary (Vitest needs it)
+
 allowBuilds:
+  simple-git-hooks: true
   esbuild: true
-  unrs-resolver: true

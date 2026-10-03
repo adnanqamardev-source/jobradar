@@ -16,6 +16,23 @@ const SERVICE_ROLE_ALLOWED = [
   "tests/**",
 ];
 
+// ENG-001 "Done when" #6 / AGENTS.md hard constraint: `src/lib/db/admin.ts` may
+// only be imported from the worker paths. This is the rule that was missing —
+// the `no-restricted-imports` entry above guards the *other* direction (direct
+// `@supabase/supabase-js` imports) and never blocked this one.
+//
+// `scripts/**` and `tests/**` are included beyond the three paths named in
+// ENG-001 because neither is reachable from the client bundle, and the
+// integration suite has to be able to drive the queue handlers it is testing.
+// Blocking them would break `scripts/queue-drain.ts` and the RLS tests.
+const ADMIN_ALLOWED = [
+  "src/lib/queue/**",
+  "src/app/api/cron/**",
+  "src/app/api/webhooks/**",
+  "scripts/**",
+  "tests/**",
+];
+
 export default tseslint.config(
   {
     ignores: [
@@ -26,6 +43,7 @@ export default tseslint.config(
       "coverage/**",
       "playwright-report/**",
       "test-results/**",
+      "tools/**",
       "**/*.config.*",
       "**/*.lock",
       "next-env.d.ts",
@@ -71,12 +89,24 @@ export default tseslint.config(
                 "Service-role access must go through lib/db/admin.ts. Direct imports are allowed only in lib/queue/**, api/cron/**, api/webhooks/**, scripts/**, and tests/**.",
             },
           ],
+          patterns: [
+            {
+              group: ["@/lib/db/admin", "@/lib/db/admin.js", "**/lib/db/admin"],
+              message:
+                "lib/db/admin.ts holds the service-role key and may only be imported from lib/queue/**, api/cron/**, api/webhooks/**, scripts/**, and tests/**. It must never reach a component or any client-reachable module.",
+            },
+          ],
         },
       ],
     },
   },
   {
-    files: SERVICE_ROLE_ALLOWED,
+    // The rule is switched off for the union of both lists, because
+    // `no-restricted-imports` cannot disable one entry and keep another — switching it
+    // off is all-or-nothing. The union is exactly right: every path that may import
+    // `@supabase/supabase-js` may also import `admin.ts`, and `admin.ts` itself must
+    // be able to create the client.
+    files: [...new Set([...SERVICE_ROLE_ALLOWED, ...ADMIN_ALLOWED])],
     rules: {
       "no-restricted-imports": "off",
     },

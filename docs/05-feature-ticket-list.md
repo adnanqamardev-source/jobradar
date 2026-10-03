@@ -37,12 +37,23 @@ E0 Foundation ─▶ E1 Auth ─▶ E2 Onboarding ─▶ E3 Ingestion ─▶ E4 
 Initialise the Next.js (App Router) + TypeScript + Tailwind project with the folder structure in [02 §4](./02-technical-architecture.md). Enable `strict` TS, ESLint with `eslint-config-next`, Prettier, and path alias `@/* → src/*`. Add `vitest` and `playwright` configs. Commit `.env.example` listing every variable from [02 §7.1](./02-technical-architecture.md) with empty values and a comment each.
 
 **Done when:**
-- [ ] `pnpm dev` boots at `localhost:3000` with a placeholder page
-- [ ] `pnpm lint`, `pnpm typecheck`, `pnpm test` all pass on an empty suite
-- [ ] Folder tree matches [02 §4](./02-technical-architecture.md) exactly (including empty dirs with `.gitkeep`)
-- [ ] `.env.example` contains every variable from [02 §7.1](./02-technical-architecture.md), none with real values
-- [ ] `.gitignore` excludes `.env.local`; `gitleaks` pre-commit hook installed
-- [ ] ESLint rule blocks imports of `src/lib/db/admin.ts` outside `lib/queue/**`, `api/cron/**`, `api/webhooks/**`
+- [ ] `pnpm dev` boots at `localhost:3000` with a placeholder page — ❌ **2026-10-03: no `layout.tsx` or `page.tsx` exists, so `/` renders the built-in 404.**
+- [x] `pnpm lint`, `pnpm typecheck`, `pnpm test` all pass on an empty suite — ✅ verified 2026-10-03.
+- [ ] Folder tree matches [02 §4](./02-technical-architecture.md) exactly (including empty dirs with `.gitkeep`) — ⚠️ **the tree in `docs/02` §4 was itself wrong and has now been corrected. Re-check against the fixed version.**
+- [ ] `.env.example` contains every variable from [02 §7.1](./02-technical-architecture.md), none with real values — ✅ 28 variables, all blank (verified 2026-10-03).
+- [x] `.gitignore` excludes `.env.local`; `gitleaks` pre-commit hook installed — ✅ **2026-10-03.** The hook is wired via `.simple-git-hooks.json` and runs `gitleaks git --staged`. The real binary (8.30.1, checksum-verified) lives in gitignored `tools/`. Project rules in `.gitleaks.toml` add the Supabase key formats the built-in ruleset misses. Details in [02](./02-technical-architecture.md) §4.2.
+- [x] ESLint rule blocks imports of `src/lib/db/admin.ts` outside `lib/queue/**`, `api/cron/**`, `api/webhooks/**` — ✅ **2026-10-03.** This was pointing the wrong way before: the rule blocked direct `@supabase/supabase-js` imports and let `admin.ts` through from anywhere. `tests/unit/eslint-guard.test.ts` pins both directions — 5 blocked paths must error, 5 sanctioned paths must stay open. Verified end-to-end with `pnpm lint`.
+
+**Scope note on the box above.** The allowed list is the three paths named here plus
+`scripts/**` and `tests/**`. Neither is reachable from the client bundle, and excluding them
+would break `scripts/queue-drain.ts` and the RLS integration tests.
+
+**Also required by the ticket body, but missing from the boxes above:**
+- `eslint-config-next` is **not installed** (absent from `package.json`), though the first
+  sentence of this ticket requires it.
+- Tailwind is **inert**: `tailwindcss@4.3.3` is installed, but `@tailwindcss/postcss` and
+  `postcss.config.mjs` are missing, and `docs/02` §4 wrongly required a `tailwind.config.ts`
+  that Tailwind 4 ignores. See [02](./02-technical-architecture.md) §4.1.
 
 ---
 

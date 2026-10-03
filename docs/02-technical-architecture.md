@@ -26,7 +26,7 @@
 | **Framework** | **Next.js (App Router)** | 15.x (pin latest stable at scaffold) | One codebase for marketing site, app, and API routes. Server Components keep the feed fast; Route Handlers host cron endpoints. Replaces: separate Express/FastAPI backend + React SPA. |
 | **Language** | **TypeScript** | 5.x strict | Zod + Prisma-or-not type safety across queue payloads and connector outputs. `strict: true`, `noUncheckedIndexedAccess: true`. |
 | **UI** | **React** | 19.x | Server Components by default; client components only where there's real interactivity (filters, kanban, wizard). |
-| **Styling** | **Tailwind CSS** | 4.x | Design tokens from [04 Frontend Spec](./04-frontend-specification.md) become CSS variables consumed as utilities. Replaces: component-library lock-in (we want a non-generic look). |
+| **Styling** | **Tailwind CSS** | 4.x (pinned exact) | Design tokens from [04 Frontend Spec](./04-frontend-specification.md) become CSS variables consumed as utilities. Replaces: component-library lock-in (we want a non-generic look). **Tailwind 4 is CSS-first — there is no `tailwind.config.ts`.** See §4.1. |
 | **Component primitives** | **Radix UI** (unstyled) | latest | Accessibility-correct dialogs, menus, popovers, tabs — behaviour only, we own all visuals. |
 | **Validation** | **Zod** | 3.x | One schema per entity, shared by API input, DB row, and form. |
 | **Database** | **PostgreSQL** via **Supabase** | 17 (Supabase-managed) | Relational data + `pgvector` + RLS in one place. Replaces: Firebase (no SQL/ranking), plain Postgres (no auth/storage/dashboard). |
@@ -125,27 +125,32 @@ jobradar/
 ├── package.json
 ├── tsconfig.json                    # strict, paths: @/* -> src/*
 ├── next.config.ts
-├── tailwind.config.ts               # tokens imported from src/styles/tokens.css
+├── postcss.config.mjs               # Tailwind 4 entry point — see the note below
 ├── eslint.config.mjs
 ├── .gitattributes
-├── tailwind.config.ts
-├── eslint.config.mjs
 ├── .prettierrc
 ├── .env.example                     # every var, empty values, documented
 ├── .gitignore
 ├── playwright.config.ts
-├── vitest.config.ts
+├── vitest.config.mts                # .mts, not .ts — a .ts config loads as CJS and breaks
+├── pnpm-workspace.yaml              # pnpm 12 settings live here, not in package.json
+├── .gitleaks.toml                   # secret-scan rules — see §4.2
+├── .simple-git-hooks.json           # declares the pre-commit hook
+│
+├── tools/                           # gitignored — local binaries, see §4.2
+│   └── gitleaks/gitleaks.exe        #   fetched by `pnpm secret:install`
 │
 ├── scripts/
 │   └── queue-drain.ts               # local queue worker (replaces Vercel cron)
 │
-├── docs/                            # ← the six source documents live here
+├── docs/                            # ← the seven source documents live here
 │   ├── 01-prd.md
 │   ├── 02-technical-architecture.md
 │   ├── 03-security-and-access.md
 │   ├── 04-frontend-specification.md
 │   ├── 05-feature-ticket-list.md
-│   └── 06-work-breakdown.md
+│   ├── 06-work-breakdown.md
+│   └── 07-implementation-plan.md    # Phase 0 completion plan, added 2026-10-03
 │
 ├── public/                          # static assets only (favicon, og-image)
 │
@@ -281,11 +286,79 @@ jobradar/
 | Design tokens only in `styles/tokens.css`; no hex values in components. | [04 Frontend Spec](./04-frontend-specification.md) stays enforceable. |
 | One Zod schema per entity in `types/`, reused for API input, DB mapping, and forms. | Three definitions drift; one cannot. |
 
+### 4.1 Tailwind 4 is CSS-first — there is no `tailwind.config.ts`
+
+**Changed 2026-10-03.** This section did not exist and the old file tree required
+`tailwind.config.ts`. That was wrong for the version we actually pin.
+
+Tailwind 4 reads its settings from **CSS**, not from a JavaScript config file. An old
+`tailwind.config.ts` is simply ignored — no error, no warning, the classes just never get
+generated. That is why styling appeared to do nothing.
+
+Three things are required, and all three must exist or Tailwind stays inert:
+
+| Piece | Where | What it does |
+|---|---|---|
+| `@import "tailwindcss";` | top of `src/app/globals.css` | loads Tailwind |
+| `postcss.config.mjs` naming the plugin `@tailwindcss/postcss` | repo root | lets Next's build run Tailwind |
+| `@tailwindcss/postcss` in `devDependencies` | `package.json` | the plugin itself |
+
+**Token values are not set here.** The colours and sizes from
+[04 Frontend Spec](./04-frontend-specification.md) go into an `@theme { … }` block inside
+`globals.css`. That work belongs to ticket **ENG-002** (design tokens), not to project setup.
+
+Current state, verified 2026-10-03: `postcss 8.5.28` is installed, but
+`@tailwindcss/postcss` is **not**, and no `postcss.config.mjs` exists. Tailwind is inert until
+ENG-001 closes this gap.
+
+### 4.2 Secret scanning — local tool, not an npm package
+
+**Changed 2026-10-03.** The setup used to be a `gitleaks` npm dependency plus a
+`gitleaks detect` script. **That never worked.** The npm package named `gitleaks` contains only
+a `.gitleaks.toml` and a README — no executable, and an empty `bin` field. There is no npm
+package that ships the gitleaks binary; it is a Go program distributed as a release download.
+
+How it works now:
+
+| Piece | Where | Role |
+|---|---|---|
+| `tools/gitleaks/gitleaks.exe` | gitignored | the real binary, pinned to **8.30.1**, checksum-verified on download |
+| `pnpm secret:install` | `package.json` | fetches that exact version |
+| `pnpm secret:scan` | `package.json` | `gitleaks git --staged` — **staged files only** |
+| `pnpm secret:scan:history` | `package.json` | full git history, run manually |
+| `.simple-git-hooks.json` | repo root | wires `secret:scan` to `pre-commit` |
+| `.gitleaks.toml` | repo root | project rules, on top of the built-in set |
+
+**Why `--staged` and not the working tree.** The real `OPENROUTER_API_KEY` sits in the
+gitignored `.env.local`. A whole-directory scan would read it and block every commit. Staged
+files only means the hook sees exactly what is about to be committed.
+
+**Why `.gitleaks.toml` is not optional.** Gitleaks' built-in rules have **no rule for any
+Supabase key format.** Verified against 8.30.1: `sb_secret_…`, `sb_publishable_…`, and legacy
+service-role JWTs all scan clean and exit 0. That is the worst gap for this repo, because the
+service-role key bypasses RLS entirely — leaking one hands over the whole database.
+
+One caveat found the hard way: gitleaks allowlists low-entropy placeholders, so
+`sk-or-v1-abcdefghijklmnopqrstuvwxyz0123456789` is **not** flagged while a realistic random
+value is. Test the scanner with realistic shapes, not with `aaaa1111`.
+
 ---
 
 ## 5. Database Schema
 
 Conventions: `uuid` PKs (`gen_random_uuid()`), `timestamptz` everywhere, `created_at default now()`, snake_case. Enum-like fields use Postgres `ENUM` types where the set is stable, `text` + CHECK where it may grow. Every table with a `user_id` gets an RLS policy (see [03](./03-security-and-access.md)).
+
+**Every foreign key gets an index — added 2026-10-03.** Postgres does *not* create an index
+on a foreign key automatically. Only the primary key is indexed for free.
+
+This is not a tidy-up item. The RLS policies in `docs/03` §4.2 check ownership by following
+the chain — for example `application_events` is allowed only if the matching row in
+`applications` belongs to you. Each hop in that chain is a lookup. Without an index on the
+foreign key, every hop is a full scan of the table, and the policy runs that scan once per
+row the query touches.
+
+The full list of foreign keys that need an index is in §5.10 below. Ticket FND-002 must
+create every one of them.
 
 ### 5.1 Entity relationship overview
 
@@ -490,7 +563,39 @@ Indexes: `gin(target_titles)`, `gin(blocked_companies)`, `gin(excluded_keywords)
 | `raw` | `jsonb` | untouched source payload, debugging |
 | `created_at` / `updated_at` | `timestamptz` | |
 
-Indexes: **unique** on `dedupe_hash`; `gin(status, last_seen_at)`; btree `(status, posted_at desc)`; HNSW on `embedding` (`vector_cosine_ops`); `gin(skills)`; `gin(to_tsvector('english', title || ' ' || coalesce(description_text,'')))` for keyword search; trigram on `title_norm` + `company_domain` for fuzzy dedupe.
+Indexes: **unique** on `dedupe_hash`; `gin(status, last_seen_at)`; btree `(status, posted_at desc)`; `gin(skills)`; `gin(to_tsvector('english', title || ' ' || coalesce(description_text,'')))` for keyword search; trigram on `title_norm` + `company_domain` for fuzzy dedupe.
+
+**Similarity index on `embedding` — read this before writing the migration.**
+
+A plain `vector` index cannot be used here. `embedding` is `vector(2048)`, and pgvector
+refuses to build an HNSW or IVFFlat index on a `vector` column wider than **2000**
+dimensions. Verified against the live database on 2026-10-03:
+
+```sql
+create table _probe_dims (id int, v vector(2048));
+create index _probe_hnsw on _probe_dims using hnsw (v vector_cosine_ops);
+-- ERROR 54000: column cannot have more than 2000 dimensions for hnsw index
+```
+
+`halfvec` (half-precision) is allowed up to 4000 dimensions, and this form was verified to
+build successfully:
+
+```sql
+create index on jobs using hnsw ((embedding::halfvec(2048)) halfvec_cosine_ops);
+```
+
+So the decision, settled 2026-10-03:
+
+- The **column stays `vector(2048)`** — full precision is kept on disk.
+- The **index is an expression index** that casts to `halfvec` while building. Only the index
+  is half-precision, so search results can be re-scored against the full-precision column
+  for the final top results. That re-scoring is the reason we keep `vector` and not `halfvec`.
+- **The query must use the identical expression** `(embedding::halfvec(2048))`, written exactly
+  like that, or Postgres will not use the index and will fall back to a slow full scan. Any
+  change to the cast or the dimension silently disables it.
+
+The 2048-dim width comes from the free embedding model chosen in `docs/02` §2
+(`nvidia/nemotron-3-embed-1b:free`). It is a consequence of that choice, not a preference.
 
 **`job_skills`** — normalised many-to-many (the `skills` array on `jobs` is the denormalised read path).
 
@@ -649,11 +754,34 @@ select * from task_queue
 
 ```sql
 -- Feed read path (single query for the dashboard)
-create view v_ranked_jobs as
-select j.*, s.final_score, s.breakdown, s.explanation, s.scored_at
+-- Fixed 2026-10-03 — the original version had three separate problems. See the note below.
+create view v_ranked_jobs with (security_invoker = true) as
+select j.id, j.title, j.company_name, j.location, j.work_mode, j.employment_type,
+       j.seniority, j.posted_at, j.last_seen_at, j.status, j.skills,
+       s.final_score, s.breakdown, s.explanation, s.scored_at
   from jobs j
-  join job_scores s on s.job_id = j.id
+  left join job_scores s on s.job_id = j.id
  where j.status = 'active';
+```
+
+**Why this view was rewritten — three bugs, all fixed by the version above.**
+
+1. **It leaked the wrong columns.** The old query was `select j.*`, which drags in *every*
+   column on `jobs` — including `raw` (the untouched copy of what the source sent us) and
+   `embedding` (2048 numbers). `docs/02` §7.2 rule 4 forbids secrets in `jobs.raw`, so `raw`
+   must never reach a browser. Sending 2048 floats to render a list is also pure waste. The
+   columns are now written out one by one.
+
+2. **It showed the wrong jobs.** The old query used `join`, which in SQL means *inner* join —
+   keep only rows where a match exists on both sides. `job_scores` is scoped per user by RLS,
+   so an inner join returns **only jobs this user has already scored**. A brand-new user would
+   get an empty feed and no error. Changed to `left join`, which keeps every active job and
+   leaves the score columns empty when the user has not scored it yet.
+
+3. **It ignored the security rules.** By default a Postgres view runs with the privileges of
+   whoever *created* it, not the person querying it. So the old view quietly stepped around the
+   row-level security policies on `jobs` and `job_scores`. `security_invoker = true` makes the
+   view run as the caller, so RLS applies. This one is not optional.
 
 -- Used by the "new since last visit" badge
 create function recent_for_user(uid uuid, since timestamptz)
@@ -681,6 +809,29 @@ for each row execute function sync_profile_role_to_jwt();
 ```
 
 **Skill extraction (SQL-side, avoids an LLM call per job):** `job_skills` is populated with a `regexp` + `alias` join against `skills.aliases` over `description_text`; low-confidence matches land below `weight 0.5` and don't count toward the skills sub-score.
+
+### 5.10 Foreign keys that need an index
+
+**Added 2026-10-03.** Postgres indexes primary keys automatically and nothing else. Each row
+below is a foreign key column with **no index**, found by reading §5.3–5.8 against the index
+lists those sections give. FND-002 must create an index for every one.
+
+| Table | Column | Points at | Why a policy needs it |
+|---|---|---|---|
+| `job_scores` | `job_id` | `jobs` | feed joins scores → jobs |
+| `applications` | `job_id` | `jobs` | job detail page lists applications |
+| `applications` | `resume_version_id` | `resume_versions` | application detail |
+| `application_events` | `application_id` | `applications` | **RLS chain** — ownership is checked through this hop |
+| `scrape_runs` | `source_id` | `sources` | source health view |
+| `jobs` | `company_id` | `companies` | dedupe on company |
+| `jobs` | `source_id` | `sources` | dedupe on source |
+| `resume_versions` | `user_id` | `profiles` | **RLS** — owner lookup |
+| `profile_skills` | `skill_id` | `skills` | skill vocabulary join |
+| `job_skills` | `skill_id` | `skills` | skill vocabulary join |
+
+The two marked **RLS** are the ones that matter most: they sit directly inside a
+row-level-security predicate, so a missing index there makes every policy check slow on
+every row.
 
 ---
 
