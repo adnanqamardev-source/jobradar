@@ -1,6 +1,12 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  // Mirrors `paths` in tsconfig.json. Vitest does not read tsconfig paths on its own,
+  // so without this every `@/lib/...` import in a test fails to resolve.
+  resolve: {
+    alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
+  },
   test: {
     environment: "node",
     include: ["tests/unit/**/*.test.ts", "tests/integration/**/*.test.ts"],

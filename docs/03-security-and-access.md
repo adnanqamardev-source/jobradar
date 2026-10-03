@@ -169,7 +169,7 @@ To escalate, they'd need `SUPABASE_SERVICE_ROLE_KEY`, which is never sent to the
 | `SUPABASE_SERVICE_ROLE_KEY` | Vercel **server-only** env | `lib/db/admin.ts` imports | on any suspected exposure |
 | `CRON_SECRET` | Vercel server env | `/api/cron/*` verify | quarterly |
 | `FIRECRAWL_API_KEY` | Vercel server env | ingest pipeline | quarterly |
-| `OPENAI_API_KEY` | Vercel server env | scoring | quarterly |
+| `OPENROUTER_API_KEY` | Vercel server env | scoring | quarterly |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | Vercel server env | billing | on exposure |
 | `RESEND_API_KEY` | Vercel server env | email | quarterly |
 | Supabase DB passwords | Supabase vault | never in code | 90 days |
@@ -199,7 +199,7 @@ Principles: **say what happened, say what to do, never leak internals.** Every f
 | `not_found` | Row missing or not yours | **Identical page for "doesn't exist" and "not yours"** — *"We couldn't find that job."* + link back | 404 (no existence leak) |
 | `rate_limited` | Action ceiling hit | *"You're moving fast — try again in 60 seconds."* | 429 + `Retry-After` |
 | `quota_exceeded` | Plan limit reached | Inline, non-modal (PRD Flow 6): *"You've used all 3 free saved searches. Pro gives you 25."* | 402-style code, `paywall_viewed` event |
-| `upstream_timeout` | Firecrawl/OpenAI/source > timeout | Toast: *"That source is slow right now — we'll retry it in the background."* | task retried, `last_error` set |
+| `upstream_timeout` | Firecrawl/OpenRouter/source > timeout | Toast: *"That source is slow right now — we'll retry it in the background."* | task retried, `last_error` set |
 | `upstream_error` | Source returned 5xx/4xx | Same as above (never a raw response body) | retry ×3 with backoff |
 | `scrape_parse_failed` | Connector output fails Zod | No user-facing error; admin run row shows it | run `partial`, row quarantined, `confidence` low |
 | `email_delivery_failed` | Resend rejects | None (silent to user) | `digests.status='failed'`, retry once, admin tile |
@@ -303,7 +303,9 @@ Principles: **say what happened, say what to do, never leak internals.** Every f
 - [ ] Account export produces valid JSON; account delete cascades and leaves no orphan Storage objects.
 - [ ] Privacy policy + terms published, covering scraping sources and résumé storage.
 - [ ] Dependency audit: no high/critical CVEs.
-- [ ] Third-party data-processing terms reviewed (Firecrawl, OpenAI, Resend, Stripe, PostHog, Supabase).
+- [ ] Third-party data-processing terms reviewed (Firecrawl, OpenRouter, Resend, Stripe, PostHog, Supabase).
+      Note: OpenRouter free-tier models may retain requests for training — re-check before any
+      job-description or profile text is sent, and prefer a no-retention provider preference.
 
 ---
 

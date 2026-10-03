@@ -375,27 +375,33 @@ All called from `src/lib/connectors/*.ts`, all mapped to `RawJob` → `Canonical
 
 ---
 
-### 5.3 OpenAI
+### 5.3 OpenRouter (LLM gateway)
 
 | | |
 |---|---|
-| **Role** | `text-embedding-3-small` for semantic matching (C2); `gpt-4o-mini` for fit rationale (C5) and description cleanup. |
-| **Base URL** | `https://api.openai.com/v1` · **Auth** `Bearer ${OPENAI_API_KEY}` |
+| **Role** | `nvidia/nemotron-3-embed-1b:free` for semantic matching (C2); a free `:free` chat model for fit rationale (C5) and description cleanup. |
+| **Base URL** | `https://openrouter.ai/api/v1` · **Auth** `Bearer ${OPENROUTER_API_KEY}` |
 | **Where used** | `lib/scoring/semantic.ts`, `lib/scoring/rationale.ts` |
+
+OpenRouter exposes an OpenAI-compatible `/embeddings` and `/chat/completions`, so the client
+code is a plain OpenAI SDK pointed at a different `baseURL`. One key covers embeddings and
+chat. **Free-model constraint:** every model id must carry the `:free` suffix, or the §8 cost
+envelope in `02` stops holding.
 
 **Embeddings — `POST /embeddings`**
 ```jsonc
 // request
-{ "model": "text-embedding-3-small",
-  "input": ["Senior Frontend Engineer — React, TypeScript…"],   // batched ≤100
-  "dimensions": 1536 }
-// response → data[0].embedding : number[1536]  → jobs.embedding / profiles.profile_embedding
+{ "model": "nvidia/nemotron-3-embed-1b:free",
+  "input": ["Senior Frontend Engineer — React, TypeScript…"] }   // batched ≤100
+// response → data[0].embedding : number[2048]  → jobs.embedding / profiles.profile_embedding
 ```
-Cost note: batching mandatory; embeddings written only when `description_text` changes (dedupe prevents re-embedding on every sighting).
+`dimensions` is **omitted deliberately**: this model rejects any value other than its native
+2048 with HTTP 400. `vector(2048)` in `02` §5 matches. Batching mandatory; embeddings are
+written only when `description_text` changes (dedupe prevents re-embedding on every sighting).
 
 **Rationale — `POST /chat/completions`** *(Pro only, jobs scoring ≥ 70, capped by `usage_events`)*
 ```jsonc
-{ "model": "gpt-4o-mini",
+{ "model": "${OPENROUTER_CHAT_MODEL}",   // a :free chat model id
   "temperature": 0.2, "max_tokens": 160,
   "response_format": { "type": "json_object" },
   "messages": [
@@ -507,8 +513,8 @@ supabase.from('v_ranked_jobs')
 |---|---|---|---|---|
 | Firecrawl | 30s | 3 (30s/2m/8m) | source paused at 5 consecutive | **None** — corpus keeps serving |
 | Job APIs | 15s | 3 | run `partial`, source amber/red | **None** |
-| OpenAI embeddings | 20s | 2 | job queued, scored when embedding lands | Slight delay |
-| OpenAI rationale | 20s | 1 | `explanation = null` | Fallback to breakdown |
+| OpenRouter embeddings | 20s | 2 | job queued, scored when embedding lands | Slight delay. **Free tier returns HTTP 429 under load — treat 429 as retryable, honour `Retry-After`** |
+| OpenRouter rationale | 20s | 1 | `explanation = null` | Fallback to breakdown |
 | Resend | 10s | 1 | `digests.status='failed'` | Email missed, admin sees it |
 | Stripe webhook | — | Stripe retries 3d | reconciliation job self-heals | Delayed entitlement, never lost |
 | PostHog | 5s | 0 (fire-and-forget) | dropped | **None** — never blocks UI |

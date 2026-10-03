@@ -411,7 +411,7 @@ Rationale: it's the only number that rises when the product is genuinely shorten
 | R2 | Aggregators / scraped boards may restrict reuse. | **Prefer official/public ATS APIs first**; Firecrawl only on public career pages; keep a legal review checkpoint before launch; no LinkedIn/Indeed direct scraping. |
 | R3 | Scraping quality varies; bad parses create junk feed items. | Confidence flag (C7), quarantine on parse failure, admin review queue. |
 | R4 | Scoring feels arbitrary → users lose trust. | Visible breakdown (C3) is a **must**, not a nice-to-have. |
-| R5 | API/LLM costs scale with success. | Per-plan quotas (G1/G2), Firecrawl only for sources without APIs, `gpt-4o-mini`-class models for rationale only, batch embedding. |
+| R5 | API/LLM costs scale with success. | Per-plan quotas (G1/G2), Firecrawl only for sources without APIs, `:free` OpenRouter models for rationale only, batch embedding. |
 | R6 | Digest fatigue → churn. | Skip-if-empty, user cadence controls, mute, hard unsubscribe in one click. |
 | R7 | Users won't trust us with their résumé. | Résumé storage is `S`, never required for activation; clear deletion (H4). |
 

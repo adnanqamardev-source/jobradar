@@ -100,7 +100,7 @@ Create `lib/logger.ts` (JSON with `requestId`/`runId`, `redact()` on `*_KEY`, `*
 
 **Done when:**
 - [ ] Every code in [03 §5.1](./03-security-and-access.md) exists with its exact user-facing copy
-- [ ] Test: a logger call containing a fake `OPENAI_API_KEY` outputs `***`
+- [ ] Test: a logger call containing a fake `OPENROUTER_API_KEY` outputs `***`
 - [ ] 500 page shows friendly copy + `requestId`, no stack trace, no env values
 - [ ] 404 for a not-yours resource is byte-identical to a genuinely missing resource
 - [ ] Sentry receives the error with `{code, requestId, userId}` and `sendDefaultPii:false`
@@ -527,7 +527,7 @@ Compose `final = 0.5·rule + 0.5·semantic`, write `job_scores` with `breakdown`
 ### SCR-006 — LLM fit rationale
 **[DATA] [SEC]** · **Priority:** SHOULD · **Depends on:** SCR-004, BIL-001
 
-`lib/scoring/rationale.ts` using `gpt-4o-mini` per [04 §5.3](./04-frontend-specification.md), gated to Pro and jobs scoring ≥70, metered via `usage_events`.
+`lib/scoring/rationale.ts` using `OPENROUTER_CHAT_MODEL` (a `:free` model) per [04 §5.3](./04-frontend-specification.md), gated to Pro and jobs scoring ≥70, metered via `usage_events`.
 
 **Done when:**
 - [ ] Prompt returns `{fit, summary, gaps}` JSON, ≤45 words, temperature 0.2

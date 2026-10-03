@@ -30,13 +30,13 @@
 | **Component primitives** | **Radix UI** (unstyled) | latest | Accessibility-correct dialogs, menus, popovers, tabs — behaviour only, we own all visuals. |
 | **Validation** | **Zod** | 3.x | One schema per entity, shared by API input, DB row, and form. |
 | **Database** | **PostgreSQL** via **Supabase** | 17 (Supabase-managed) | Relational data + `pgvector` + RLS in one place. Replaces: Firebase (no SQL/ranking), plain Postgres (no auth/storage/dashboard). |
-| **Vector search** | **pgvector** | 0.8.x | `vector(1536)` column + HNSW index. Replaces: Pinecone/Weaviate — an extra vendor and sync layer for a corpus that fits comfortably in Postgres. |
+| **Vector search** | **pgvector** | 0.8.x | `vector(2048)` column + HNSW index. Replaces: Pinecone/Weaviate — an extra vendor and sync layer for a corpus that fits comfortably in Postgres. |
 | **Auth** | **Supabase Auth** | — | Magic link + Google OAuth, JWTs that RLS understands natively. Replaces: NextAuth (weaker RLS fit), Clerk (extra cost/vendor). |
 | **File storage** | **Supabase Storage** | — | Résumé PDFs, logos. Private buckets + signed URLs. |
 | **Web scraping** | **Firecrawl** | v2 API | `scrape` (JS-rendered pages, JSON-schema extraction), `search` (discover postings), `map` (find careers pages). Replaces: self-hosted Playwright farm (ops burden) + raw `fetch` (breaks on JS sites). |
 | **Job data APIs** | Greenhouse, Lever, Ashby, Remotive, Arbeitnow, USAJOBS, Adzuna | — | Structured, documented, ToS-friendly. **Used before Firecrawl wherever an API exists** (see §6.1). |
-| **Embeddings** | **OpenAI** `text-embedding-3-small` | 1536-dim | Cheap, fast, good enough for job/profile similarity. Batching in chunks of 100. |
-| **LLM rationale** | **OpenAI** `gpt-4o-mini` | — | 2–3 sentence fit rationale + description cleanup. Short output → small model. Gated behind Pro (C5). |
+| **Embeddings** | **OpenRouter** `nvidia/nemotron-3-embed-1b:free` | **2048-dim** | OpenAI-compatible `/embeddings` router. Chosen because it is **free** (`pricing.prompt = 0`) and 32k-token context, so long descriptions are not truncated. Batching in chunks of 100. Dimensions are fixed at 2048 — the API rejects any `dimensions` value other than 2048. |
+| **LLM rationale** | **OpenRouter** free chat model (`:free`) | — | 2–3 sentence fit rationale + description cleanup. Short output → small model. Gated behind Pro (C5). Model id is configurable via `OPENROUTER_CHAT_MODEL`; must be a `:free` id while the cost envelope holds. |
 | **Email** | **Resend** + **React Email** | — | HTML email as typed React components; good deliverability; simple API. |
 | **Payments** | **Stripe** | API 2025-x | Checkout + webhooks + customer portal. G1–G4. |
 | **Queue / scheduling** | **Postgres table + `pg_cron`** | — | `task_queue` table, `pg_cron` enqueues on schedule, Route Handlers process. Replaces: Redis/BullMQ (another store), Inngest (another vendor) — at MVP volume a table with `FOR UPDATE SKIP LOCKED` is ample. |
@@ -94,8 +94,8 @@
                                   │                   │
                     ┌─────────────▼──────┐  ┌─────────▼──────────┐
                     │  JOB SOURCES       │  │  MODELS / EMAIL    │
-                    │  Greenhouse/Lever/ │  │  OpenAI embeddings │
-                    │  Ashby/Remotive/   │  │  OpenAI gpt-4o-mini│
+                    │  Greenhouse/Lever/ │  │  OpenRouter embeddings│
+                    │  Ashby/Remotive/   │  │  OpenRouter free chat│
                     │  Arbeitnow/USAJOBS/│  │  Resend            │
                     │  Adzuna/Firecrawl  │  └────────────────────┘
                     └────────────────────┘
@@ -347,7 +347,7 @@ create type digest_channel   as enum ('email','slack');
 | `blocked_companies` | `text[]` default `{}` | normalised slugs |
 | `excluded_keywords` | `text[]` default `{}` | |
 | `preferred_companies` | `text[]` default `{}` | +10 score weight |
-| `profile_embedding` | `vector(1536)` | aggregate profile vector |
+| `profile_embedding` | `vector(2048)` | aggregate profile vector |
 | `onboarding_completed` | `boolean default false` | |
 | `onboarding_step` | `smallint default 1` | resume abandoned wizard |
 | `last_digest_at` | `timestamptz` | |
@@ -486,7 +486,7 @@ Indexes: `gin(target_titles)`, `gin(blocked_companies)`, `gin(excluded_keywords)
 | `sighting_count` | `integer default 1` | how many sources/observations |
 | `status` | `job_status default 'active'` | |
 | `confidence` | `numeric(3,2) default 1.0` | parse quality (C7) |
-| `embedding` | `vector(1536)` | |
+| `embedding` | `vector(2048)` | 2048-dim to match `nvidia/nemotron-3-embed-1b:free` (§2) |
 | `raw` | `jsonb` | untouched source payload, debugging |
 | `created_at` / `updated_at` | `timestamptz` | |
 
@@ -778,14 +778,15 @@ Daily `pg_cron` → `send_digest` tasks partitioned by `time_zone` → handler s
 | `NEXT_PUBLIC_APP_URL` | client + server | canonical origin | `http://localhost:3000` in dev |
 | `CRON_SECRET` | server | bearer token for `/api/cron/*` | verified constant-time |
 | `FIRECRAWL_API_KEY` | server | scraping/search/map | metered — budget-guarded |
-| `OPENAI_API_KEY` | server | embeddings + rationale | |
-| `OPENAI_EMBEDDING_MODEL` | server | default `text-embedding-3-small` | change → full reindex |
-| `OPENAI_CHAT_MODEL` | server | default `gpt-4o-mini` | |
+| `OPENROUTER_API_KEY` | server | embeddings + rationale | OpenRouter auth token; one key replaces OpenAI + Gemini + Groq |
+| `OPENROUTER_BASE_URL` | server | default `https://openrouter.ai/api/v1` | OpenAI-compatible surface |
+| `OPENROUTER_EMBEDDING_MODEL` | server | default `nvidia/nemotron-3-embed-1b:free` | change → full reindex |
+| `OPENROUTER_CHAT_MODEL` | server | free `:free` model id | rationale + description cleanup |
 | `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` | server | aggregator | |
 | `USAJOBS_API_KEY` / `USAJOBS_AUTHORIZATION_KEY` | server | federal jobs | |
 | `RAPIDAPI_KEY` | server | optional JSearch | may be blank |
 | `RESEND_API_KEY` | server | transactional email | |
-| `EMAIL_FROM` | server | e.g. `JobRadar <hi@jobradar.app>` | |
+| `EMAIL_FROM` | server | e.g. `JobRadar <hi@jobradar.app>` | RFC 5322 address, display name optional. Plain `a@b.com` is also valid. Blank allowed (email disabled). |
 | `STRIPE_SECRET_KEY` | server | billing | |
 | `STRIPE_WEBHOOK_SECRET` | server | signature verification | |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | client | checkout | |
@@ -806,12 +807,17 @@ Daily `pg_cron` → `send_digest` tasks partitioned by `time_zone` → handler s
 4. **Secrets hygiene:** no secrets in logs, `audit_logs.meta`, Sentry breadcrumbs, or `jobs.raw`. A `redact()` helper strips `*_KEY`, `*_SECRET`, `authorization`, `cookie` before any serialisation.
 5. **Plan limits and scoring weights** live in code (`lib/billing/plans.ts`, `lib/scoring/weights.ts`) behind feature flags — not in env vars — so they're reviewed and versioned.
 6. **Rotation:** rotate `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `FIRECRAWL_API_KEY`, `STRIPE_WEBHOOK_SECRET` on any suspected exposure; document rotation date in `docs/`.
+6a. **Blank is not the same as absent.** `.env` files express "not configured" as `VAR=`, which
+   parses to an empty string — *present*, not undefined. Zod's `.optional()` therefore does not
+   cover it. Every optional var uses the `blank()` helper in `src/lib/env.ts`, which maps `""`
+   to `undefined` before validating. Without this, any unset optional var fails boot validation
+   and the whole app refuses to start.
 7. **Per-request scoping:** Server Actions and Route Handlers take the user-scoped client (user JWT → RLS enforced). Service-role client is created lazily and only inside queue handlers.
 
 ### 7.3 Local development
 
 ```bash
-cp .env.example .env.local      # fill from Supabase / Firecrawl / OpenAI dashboards
+cp .env.example .env.local      # fill from Supabase / Firecrawl / OpenRouter dashboards
 supabase start                  # local stack
 supabase db reset               # migrations + seed
 pnpm dev                        # http://localhost:3000
