@@ -1,0 +1,45 @@
+# Supabase configuration — docs/02-technical-architecture.md §7.3
+project_id = "jobradar"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 17
+# migrations live in ./migrations, applied by `supabase db reset`
+
+[db.pooler]
+enabled = false
+
+[auth]
+enabled = true
+# docs/03 §2.1 — magic link + Google OAuth only; passwords deliberately disabled
+enable_signup = true
+enable_confirmations = true
+# magic link
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+double_confirm_changes = true
+max_frequency = "10m"   # 3 links / 10 min (docs/03 §2.3)
+
+[auth.external.google]
+enabled = true
+client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"
+redirect_uri = "env(NEXT_PUBLIC_APP_URL)/auth/callback"
+
+[storage]
+enabled = true
+# private resumes bucket — docs/02 §5.3, docs/03 §4.2
+
+[functions]
+# reserved — no edge functions in MVP (docs/02 §2)
+
+[analytics]
+enabled = false

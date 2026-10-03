@@ -1,0 +1,43 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# env — .env.example is the only one committed
+.env
+.env.local
+.env.*.local
+
+# next
+.next/
+out/
+build/
+next-env.d.ts
+
+# testing
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# vercel
+.vercel/
+
+# logs & os
+*.log
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.DS_Store
+Thumbs.db
+
+# editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# supabase local
+supabase/.temp/
+supabase/.branches/
+
+# sentry
+.sentryclirc

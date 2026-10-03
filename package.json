@@ -1,0 +1,61 @@
+{
+  "name": "jobradar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Automated job finding workflow — scrape, dedupe, rank, track.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "queue:drain": "tsx scripts/queue-drain.ts",
+    "db:reset": "supabase db reset",
+    "secret:scan": "gitleaks detect --source . --no-git"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "latest",
+    "@radix-ui/react-dropdown-menu": "latest",
+    "@radix-ui/react-popover": "latest",
+    "@radix-ui/react-tabs": "latest",
+    "@radix-ui/react-tooltip": "latest",
+    "@sentry/nextjs": "latest",
+    "@supabase/ssr": "latest",
+    "@supabase/supabase-js": "latest",
+    "clsx": "latest",
+    "lucide-react": "latest",
+    "next": "15.x",
+    "react": "19.x",
+    "react-dom": "19.x",
+    "react-email": "latest",
+    "resend": "latest",
+    "stripe": "latest",
+    "tailwind-merge": "latest",
+    "zod": "3.x"
+  },
+  "devDependencies": {
+    "@playwright/test": "latest",
+    "@testing-library/jest-dom": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitest/coverage-v8": "latest",
+    "eslint": "latest",
+    "eslint-config-next": "latest",
+    "eslint-config-prettier": "latest",
+    "gitleaks": "latest",
+    "postcss": "latest",
+    "prettier": "latest",
+    "supabase": "latest",
+    "tailwindcss": "4.x",
+    "tsx": "latest",
+    "typescript": "5.x",
+    "vitest": "latest"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
