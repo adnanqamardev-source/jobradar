@@ -7,12 +7,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "queue:drain": "tsx scripts/queue-drain.ts",
+    "queue:drain": "tsx --env-file=.env.local scripts/queue-drain.ts",
     "db:reset": "supabase db reset",
     "secret:scan": "gitleaks detect --source . --no-git"
   },
@@ -37,6 +37,7 @@
     "zod": "3.x"
   },
   "devDependencies": {
+    "@eslint/js": "latest",
     "@playwright/test": "latest",
     "@testing-library/jest-dom": "latest",
     "@types/node": "latest",
@@ -44,7 +45,6 @@
     "@types/react-dom": "latest",
     "@vitest/coverage-v8": "latest",
     "eslint": "latest",
-    "eslint-config-next": "latest",
     "eslint-config-prettier": "latest",
     "gitleaks": "latest",
     "postcss": "latest",
@@ -53,6 +53,7 @@
     "tailwindcss": "4.x",
     "tsx": "latest",
     "typescript": "5.x",
+    "typescript-eslint": "latest",
     "vitest": "latest"
   },
   "engines": {

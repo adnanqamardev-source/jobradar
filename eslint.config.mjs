@@ -28,6 +28,7 @@ export default tseslint.config(
       "test-results/**",
       "**/*.config.*",
       "**/*.lock",
+      "next-env.d.ts",
     ],
   },
   js.configs.recommended,
