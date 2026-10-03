@@ -44,8 +44,8 @@
 | **Analytics** | **PostHog** | latest | Funnels + feature flags + session replay for the metric tree in §7 of the PRD. |
 | **Error tracking** | **Sentry** | latest | Next.js SDK, source maps, traces sampled at 20%. |
 | **Hosting** | **Vercel** | — | Next.js-native, cron, preview deploys. |
-| **Testing** | **Vitest** + **Playwright** + **Testcontainers Postgres** | — | Unit/integration/e2e. Connector contract tests run against recorded fixtures, not live APIs. |
-| **Lint / format** | **ESLint** + **Prettier** | latest | With `eslint-config-next` and `import/order`. |
+| **Testing** | **Vitest** + **Playwright** + **Testcontainers Postgres** | — | Unit/integration/e2e. Connector contract tests run against recorded fixtures, not live APIs. Config is `vitest.config.mts`; serial execution via top-level `fileParallelism: false` (Vitest 4+ removed `poolOptions`). |
+| **Lint / format** | **ESLint** + **Prettier** | latest | Flat config (`eslint.config.mjs`). `next lint` is removed in Next 16 — lint via `eslint .`. Includes the service-role import guard and a no-hex-literals rule. |
 
 ### What we are explicitly *not* using (and why)
 
@@ -127,18 +127,25 @@ jobradar/
 ├── next.config.ts
 ├── tailwind.config.ts               # tokens imported from src/styles/tokens.css
 ├── eslint.config.mjs
+├── .gitattributes
+├── tailwind.config.ts
+├── eslint.config.mjs
 ├── .prettierrc
 ├── .env.example                     # every var, empty values, documented
 ├── .gitignore
 ├── playwright.config.ts
 ├── vitest.config.ts
 │
-├── docs/                            # ← the five source documents live here
+├── scripts/
+│   └── queue-drain.ts               # local queue worker (replaces Vercel cron)
+│
+├── docs/                            # ← the six source documents live here
 │   ├── 01-prd.md
 │   ├── 02-technical-architecture.md
 │   ├── 03-security-and-access.md
 │   ├── 04-frontend-specification.md
-│   └── 05-feature-ticket-list.md
+│   ├── 05-feature-ticket-list.md
+│   └── 06-work-breakdown.md
 │
 ├── public/                          # static assets only (favicon, og-image)
 │
@@ -199,6 +206,7 @@ jobradar/
 │   │   │   ├── session.ts           #   getServerSession(), requireUser()
 │   │   │   ├── guards.ts            #   requireAdmin(), requirePlan()
 │   │   │   └── callback.ts
+│   │   ├── env.ts                   #   Zod env schema — single source of truth
 │   │   ├── connectors/              # ★ PLUG-IN POINT (see §6.1)
 │   │   │   ├── types.ts             #   SourceConnector interface + RawJob
 │   │   │   ├── registry.ts          #   name → connector map
@@ -247,6 +255,9 @@ jobradar/
 │   └── config.toml
 │
 ├── emails/                          #   (alias → src/lib/email/templates)
+│
+├── scripts/
+│   └── queue-drain.ts               #   local queue drain — replaces Vercel cron (`pnpm queue:drain --once`)
 │
 ├── tests/
 │   ├── unit/                        #   scoring, dedupe, normalise, salary parse
@@ -301,7 +312,7 @@ create type employment_type  as enum ('full_time','part_time','contract','intern
 create type prof_level       as enum ('familiar','proficient','expert');
 create type app_stage        as enum ('discovered','saved','applied','screening','interview','offer','rejected','withdrawn');
 create type task_status      as enum ('pending','running','done','failed','cancelled');
-create type task_kind        as enum ('ingest_source','score_jobs','send_digest','rescore_profile','account_export','cleanup'];
+create type task_kind        as enum ('ingest_source','score_jobs','send_digest','rescore_profile','account_export','cleanup');
 create type run_status       as enum ('running','success','partial','failed');
 create type source_kind      as enum ('api_greenhouse','api_lever','api_ashby','api_remotive','api_arbeitnow','api_usajobs','api_adzuna','firecrawl_scrape','firecrawl_search');
 create type plan_tier        as enum ('free','pro');
@@ -651,6 +662,22 @@ returns setof uuid …;
 -- Transactional stage move writes history in one shot
 create function move_application(app_id uuid, to_stage app_stage, note text default null)
 returns void …;  -- also inserts application_events, raises on invalid transition
+
+-- Sync profiles.role → auth.users.raw_app_meta_data.role so is_admin() reads the JWT claim
+create or replace function sync_profile_role_to_jwt()
+returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if old.role is distinct from new.role then
+    perform auth.update_user(new.id, '{"role": new.role}'::jsonb);
+  end if;
+  return new;
+end;
+$$;
+
+create trigger trg_sync_profile_role
+after update of role on profiles
+for each row execute function sync_profile_role_to_jwt();
 ```
 
 **Skill extraction (SQL-side, avoids an LLM call per job):** `job_skills` is populated with a `regexp` + `alias` join against `skills.aliases` over `description_text`; low-confidence matches land below `weight 0.5` and don't count toward the skills sub-score.
@@ -790,6 +817,14 @@ supabase db reset               # migrations + seed
 pnpm dev                        # http://localhost:3000
 pnpm queue:drain --once         # process one queue batch locally (no Vercel cron)
 ```
+
+Standalone scripts under `scripts/` load env through Node's built-in `--env-file=.env.local`
+flag, wired into the npm script. There is **no `dotenv` dependency** — adding one is a
+regression, not a fix.
+
+**Against a remote project:** `supabase link --project-ref <ref>` then `supabase db push`.
+A `db push` reporting "up to date" when `supabase/migrations/` is empty means nothing was
+applied, not that the schema is current. Confirm via the Supabase MCP `list_migrations`.
 
 ---
 

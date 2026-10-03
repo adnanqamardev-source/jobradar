@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Spec-first repo. **No application code exists yet** — `src/` is empty, no lockfile, no migrations. The six docs in `docs/` are the authority for everything.
+Spec-first repo. **No application code exists yet** — `src/` holds only `.gitkeep` placeholders and `styles/tokens.css`. No migrations. The six docs in `docs/` are the authority for everything.
 
 ## Order of work (do not reorder)
 
@@ -27,7 +27,7 @@ If you need a table, column, env var, route, endpoint, colour, or ticket ID that
 | Task breakdown / acceptance criteria | `docs/05-feature-ticket-list.md` |
 | Phase, track assignment, ticket mapping | `docs/06-work-breakdown.md` |
 
-Read **only the cited section** — the six docs total ~190 KB. Pulling a whole doc into context wastes the session and buries the part you needed.
+Read **only the cited section** — the six docs total ~209 KB. Pulling a whole doc into context wastes the session and buries the part you needed.
 
 ## Mandatory: update docs every iteration
 
@@ -58,12 +58,21 @@ These are rules you must honour from the first commit. The lint rule ships in `F
 pnpm install
 pnpm dev                 # localhost:3000
 pnpm typecheck           # tsc --noEmit
-pnpm lint
+pnpm lint                # eslint . — NOT `next lint` (removed in Next 16)
 pnpm test                # vitest (unit + integration)
 pnpm test:e2e            # playwright
 pnpm queue:drain --once  # process one queue batch locally; replaces Vercel cron
 supabase db reset        # rebuild local schema + seed
 ```
+
+Tooling notes (FND-001, settled):
+
+- **Env loading in scripts:** Node's built-in `--env-file=.env.local`, wired into the
+  `queue:drain` npm script. Do not add `dotenv`; it was never a dependency.
+- **Vitest:** config is `vitest.config.mts` (`.mts`, not `.ts` — the `.ts` extension loaded ESM
+  as CJS). Vitest 4+ removed `poolOptions`; serial execution is top-level `fileParallelism: false`.
+- **ESLint:** flat config only. `next lint` is deprecated and gone in Next 16.
+- **ESLint exclusions:** `next-env.d.ts` is ignored — Next generates its triple-slash references.
 
 Verify in this order: `typecheck → lint → test`. Claim done only with pasted output, not assertion.
 
@@ -72,3 +81,70 @@ Verify in this order: `typecheck → lint → test`. Claim done only with pasted
 1. Confirm the current phase from `docs/06-work-breakdown.md`.
 2. Confirm the ticket exists. New work needs a ticket.
 3. Check `notes.md` — if a method or loop is listed there, don't repeat it.
+
+## Rule 0 — Verify before asserting (overrides every other rule)
+
+An unverified claim is worse than no claim, because downstream work inherits it. Every factual
+statement about the repo, the database, or a server must come from a tool result in this
+session — never from a plausible inference, a remembered tool listing, or an assumption that
+something "should" exist.
+
+**Run the check. Then state the finding. Never the reverse.**
+
+| Claiming | Verify with | Not |
+|---|---|---|
+| A file is missing | `git ls-files`, `Get-ChildItem` | a `glob` result (may be partial) |
+| A file exists | `git ls-files`, `git status --short` | memory of writing it |
+| Secrets are protected | `git check-ignore -v <path>` | "`.gitignore` has it" |
+| A migration applied | `list_migrations` via Supabase MCP | `db push` saying "up to date" |
+| A DB table exists | `list_tables` via Supabase MCP | assuming a migration covered it |
+| An MCP server is live | `opencode mcp list` | the tool catalog listing it |
+| Tests pass | pasted `pnpm test` output | "tests pass" |
+
+**"Up to date" against zero migrations means nothing was applied.** Treat any success message
+whose scope is unverified as a non-answer.
+
+If a check is skipped, say so explicitly. Silence reads as confirmation.
+
+## Rule 1 — Stop repeating what `notes.md` already logged
+
+Read `notes.md` **before** the first tool call of a task, not after. If a method is listed there,
+it is forbidden for this session.
+
+Logging a failure is not compliance. `notes.md` exists to prevent recurrence; if a rule in it is
+violated anyway, the rule was too weak or too late. Escalate to a hard rule here instead of
+appending a second note.
+
+## Rule 2 — One question, plain text
+
+Ask for a credential or decision **once**, in plain prose. Never loop the question tool, and never
+re-ask for something already pasted in the conversation. Re-read the transcript before asking.
+
+Validate credential *shape* before writing it anywhere:
+
+| Prefix | Is | Belongs in |
+|---|---|---|
+| `sb_publishable_` | anon / public key | `NEXT_PUBLIC_SUPABASE_ANON_KEY` |
+| `sb_secret_` | service-role key | `SUPABASE_SERVICE_ROLE_KEY` |
+| `eyJ` | legacy JWT service key | `SUPABASE_SERVICE_ROLE_KEY` |
+| `sbp_` | personal access token | **never** an env var in this repo |
+
+A PAT pasted into a key slot is a leak. Rotate it and say so.
+
+## Rule 3 — Scratch files and the folder map
+
+`docs/02` §4 maps every production path. Two carve-outs:
+
+- **Sanctioned exceptions.** `scripts/queue-drain.ts` is referenced by `package.json` and lives in
+  `scripts/`. This location is legitimate.
+- **Throwaway utilities.** Ad-hoc verification scripts are allowed **only** if they are deleted in
+  the same session they are created. Never commit one. Never let one justify a new §4 entry.
+
+## Rule 4 — Finish with evidence, or say you did not finish
+
+Close a task with pasted output from the commands in **Commands** above, in `typecheck → lint →
+test` order. "Should work", "should pass", and "looks correct" are not results.
+
+If a step was skipped, blocked, or partially completed, state that plainly in the summary —
+alongside what would be needed to finish it. Partial work reported as complete costs more time
+than work left undone.
