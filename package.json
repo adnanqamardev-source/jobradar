@@ -17,6 +17,7 @@
     "secret:install": "node -e \"const{execFileSync}=require('node:child_process');execFileSync('powershell',['-NoProfile','-Command','New-Item -ItemType Directory -Force -Path tools/gitleaks|Out-Null;Invoke-WebRequest -Uri https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_windows_x64.zip -OutFile tools/gitleaks/gitleaks.zip;Expand-Archive -Force tools/gitleaks/gitleaks.zip tools/gitleaks;Remove-Item tools/gitleaks/gitleaks.zip'])\"",
     "secret:scan": "tools\\gitleaks\\gitleaks.exe git --staged --redact",
     "secret:scan:history": "tools\\gitleaks\\gitleaks.exe git --redact",
+    "secret:scan:bundle": "tsx scripts/scan-bundle-secrets.ts",
     "prepare": "simple-git-hooks"
   },
   "dependencies": {

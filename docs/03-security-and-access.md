@@ -190,7 +190,34 @@ supabase.from('task_queue').select('*')     // → error: RLS disabled for role
 supabase.from('job_scores').insert({...})   // → 0 rows affected: no INSERT policy
 ```
 
-To escalate, they'd need `SUPABASE_SERVICE_ROLE_KEY`, which is never sent to the client (§4.4) — it lives only in Vercel server-side env vars, referenced exclusively from `src/lib/db/admin.ts`, whose import is blocked everywhere except `lib/queue/**`, `api/cron/**`, `api/webhooks/**` by an ESLint `no-restricted-imports` rule. A CI check greps the built client bundle for any key matching `(supabase|sk-|whsec_|rk_live)` and fails the build on a hit.
+To escalate, they'd need `SUPABASE_SERVICE_ROLE_KEY`, which is never sent to the client (§4.4) — it lives only in Vercel server-side env vars, referenced exclusively from `src/lib/db/admin.ts`, whose import is blocked everywhere except `lib/queue/**`, `api/cron/**`, `api/webhooks/**` by an ESLint `no-restricted-imports` rule.
+
+Three independent gates enforce this, and each catches a different failure:
+
+| Gate | Catches | Cannot catch |
+|---|---|---|
+| ESLint `no-restricted-imports` | A *source* file importing `lib/db/admin.ts` from a client-reachable path | A secret inlined into a string, or reaching the bundle by another route |
+| CI `secret-scan` (`scripts/scan-bundle-secrets.mjs`) | A credential **value** in the built output — `.next/static/` for all key shapes, `.next/server/` for service-role only | Anything not in the build output |
+| `tests/e2e/smoke.spec.ts` bundle-leak check | A service-role key served to a real browser over HTTP | Anything not fetched by a page load |
+
+**Why the CI scan matches values, not names — corrected 2026-10-04.** The original spec here
+called for grepping `(supabase|sk-|whsec_|rk_live)`. That predicate is broken in both
+directions, and it was committed that way: `supabase` is the *library name*, present in every
+page chunk, so the gate failed on every build; `sk-` matches `skipped`, `task-`, and any
+minified identifier ending in those two characters. Meanwhile it greps for *names*, so a real
+leak — `sb_secret_<the actual key>` — is no better matched than noise. A gate that always fails
+teaches the team to ignore it, which is worse than no gate.
+
+`scripts/scan-bundle-secrets.mjs` replaces it with three layers: 9 credential **shapes**, each
+requiring 20+ characters of key material after the prefix (a bare prefix is not a credential);
+exact-value matching against the live values of 8 secret env vars, which catches *this*
+deployment's key even if its shape is unfamiliar; and a `SUPABASE_SERVICE_ROLE_KEY` **reference**
+check, because reading the variable at all in a client chunk means the import boundary is
+already breached. Verified in both directions — planted `sb_secret_` fails, ordinary minified
+code containing `supabase`/`sk-` passes.
+
+Exit codes: `0` clean, `1` findings printed, `2` build output missing (i.e. `pnpm build` was
+skipped — not a pass).
 
 ### 4.4 Secrets & key custody
 

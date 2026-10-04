@@ -745,8 +745,7 @@ before starting.
 | `pnpm audit` | Run it **before** wiring | 42 pinned dependencies plus Next 15.5.27 could fail on day one. Unverified so far |
 | e2e | `PLAYWRIGHT_TEST_BASE_URL` + conditional `webServer` | `playwright.config.ts` hardcodes `localhost:3000` and always boots `pnpm dev`. A preview-URL job would test localhost while its name claimed otherwise — a green result proving nothing |
 
-`.github/workflows/deploy.yml` — preview on PR, production on `main`, via Vercel's Git
-integration (zero YAML), plus a `main`-gated `supabase db push`. Sanctioned by `docs/02` §4.
+Deployment runs via Vercel's Git integration (zero YAML), plus a `main`-gated `supabase db push`. Sanctioned by `docs/02` §4. **Done 2026-10-04** — the `deploy.yml` that was written instead (using `amondnet/vercel-action` with `VERCEL_TOKEN` / `VERCEL_ORG_ID` / `VERCEL_PROJECT_ID`) has been removed; see `docs/02` §4 "Deployment". Project `jobradar` created; connecting the GitHub repo is a one-time dashboard step.
 
 **The bundle secret grep needs tightening.** The sketch greps for `(supabase|sk-|whsec_|rk_live)`.
 `sk-` is short and will eventually match ordinary words or base64 in a bundle. Tighten to the

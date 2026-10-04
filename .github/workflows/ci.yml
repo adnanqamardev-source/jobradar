@@ -88,13 +88,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Scan for secrets in client bundle
-        run: |
-          # Check for any secret patterns in the built client output
-          if grep -rE "(supabase|sk-|whsec_|rk_live|sb_secret_|sb_publishable_)" .next/static/chunks/ .next/server/app/ 2>/dev/null; then
-            echo "❌ Secret found in client bundle"
-            exit 1
-          fi
-          echo "✅ Client bundle clean"
+        run: pnpm secret:scan:bundle
 
   e2e:
     name: Playwright E2E
@@ -111,9 +105,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps
+      # Named as docs/07 §Step 4 specifies. Left unset on purpose: pointing this at a
+      # production URL would test whatever is currently deployed, not the commit under
+      # review, so a green run would prove nothing about the change. Set it to a preview
+      # URL when a per-PR deployment is actually wired up.
       - run: pnpm test:e2e
         env:
-          PLAYWRIGHT_BASE_URL: https://${{ github.event.repository.name }}.vercel.app
+          PLAYWRIGHT_TEST_BASE_URL: ${{ vars.PLAYWRIGHT_TEST_BASE_URL }}
 
   audit:
     name: Dependency Audit
@@ -128,5 +126,7 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm audit --prod --level=high
+      # `--audit-level`, not `--level`. pnpm rejects `--level` outright with exit code 2,
+      # which reads as a CI failure caused by a CVE when it is actually a typo in the flag.
+      - run: pnpm audit --prod --audit-level=high
         continue-on-error: false

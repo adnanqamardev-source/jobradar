@@ -141,7 +141,8 @@ jobradar/
 │   └── gitleaks/gitleaks.exe        #   fetched by `pnpm secret:install`
 │
 ├── scripts/
-│   └── queue-drain.ts               # local queue worker (replaces Vercel cron)
+│   ├── queue-drain.ts               # local queue worker (replaces Vercel cron)
+│   └── scan-bundle-secrets.mjs      #   FND-005 CI gate — credential *values* in build output
 │
 ├── docs/                            # ← the seven source documents live here
 │   ├── 01-prd.md
@@ -263,7 +264,8 @@ jobradar/
 ├── emails/                          #   (alias → src/lib/email/templates)
 │
 ├── scripts/
-│   └── queue-drain.ts               #   local queue drain — replaces Vercel cron (`pnpm queue:drain --once`)
+│   ├── queue-drain.ts               #   local queue drain — replaces Vercel cron (`pnpm queue:drain --once`)
+│   └── scan-bundle-secrets.mjs      #   credential-value scan of `.next/` (FND-005 CI gate)
 │
 ├── tests/
 │   ├── unit/                        #   scoring, dedupe, normalise, salary parse
@@ -273,8 +275,35 @@ jobradar/
 │
 └── .github/workflows/
     ├── ci.yml                       #   lint → typecheck → unit → integration → e2e
-    └── deploy.yml                   #   preview on PR, prod on main
+    └── (no deploy.yml)              #   deploys run via Vercel's Git integration — see below
 ```
+
+### Deployment — Vercel Git integration, zero YAML
+
+**There is deliberately no `deploy.yml`.** Deployments are driven by Vercel's own Git
+integration: the `jobradar` project is connected to `adnanqamardev-source/jobradar`, and every
+push to a branch gets a preview, every merge to `main` a production deploy.
+
+This replaced a `.github/workflows/deploy.yml` that ran `amondnet/vercel-action@v25` with
+`secrets.VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`. Two reasons it went:
+
+1. **It could not work as written.** None of those three secrets were set, and no Vercel
+   project existed, so every push died on `Input required and not supplied: vercel-token`. Its
+   `deploy-preview` job was dead on arrival besides — gated on `github.event_name ==
+   'pull_request'` inside a workflow triggered only by `push`.
+2. **A long-lived account token in repo secrets is a liability.** The service-role key is the
+   secret this repo must never leak (`§4` rule 1); storing a Vercel account token next to it
+   in GitHub Actions widens the blast radius for no benefit. The Git integration needs no
+   token in the repo at all — Vercel holds its own installation grant.
+
+**One-time setup, in the Vercel dashboard:** connect the GitHub repository to the `jobradar`
+project. Until that is done, pushes build in CI but produce no deployment.
+
+**What CI still owns.** `ci.yml` keeps every gate — lint, typecheck, test, build, e2e,
+secret-scan, audit. Deploy is Vercel's job; correctness is CI's. The e2e job reads
+`PLAYWRIGHT_TEST_BASE_URL` from **repository variables**, not secrets, and is deliberately
+unset: pointing it at the production URL would test whatever is currently deployed rather than
+the commit under review, so a green run would prove nothing about the change.
 
 ### Rules that keep this structure healthy
 
@@ -1017,7 +1046,13 @@ pnpm queue:drain --once         # process one queue batch locally (no Vercel cro
 
 Standalone scripts under `scripts/` load env through Node's built-in `--env-file=.env.local`
 flag, wired into the npm script. There is **no `dotenv` dependency** — adding one is a
-regression, not a fix.
+regression, not a fix. `scripts/scan-bundle-secrets.mjs` is the exception: it reads
+`process.env` directly and takes no `--env-file`, because it must see the *live* secret values
+to exact-match them. It exits `2` if `.next/` is missing, so run `pnpm build` first:
+
+```bash
+pnpm build && pnpm secret:scan:bundle    # credential values in the build output
+```
 
 **Against a remote project:** `supabase link --project-ref <ref>` then `supabase db push`.
 A `db push` reporting "up to date" when `supabase/migrations/` is empty means nothing was
