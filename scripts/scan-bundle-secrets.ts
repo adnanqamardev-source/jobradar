@@ -33,14 +33,20 @@
  * otherwise turn the check into a no-op that reports success. `.mjs` would be outside
  * `tsconfig.json` and therefore outside `pnpm typecheck`.
  *
- * ## Scan boundary
+ * ## Scan boundary — three tiers, because "secret" means different things per tier
  *
- *   `.next/static/` — the client bundle proper. Anything here is downloadable by any visitor,
- *                    so it is checked against *every* credential shape.
- *   `.next/server/` — checked for the *service-role* shapes only. Server output legitimately
- *                    reads secrets at runtime; what must never happen is the service-role key
- *                    ending up in a chunk the browser can fetch. Demanding the impossible
- *                    from server output would train people to `--no-verify` the gate.
+ *   `.next/static/` (client bundle) — every credential shape, **plus** bare-name references.
+ *                    Anything here is downloadable by any visitor, so even the *name*
+ *                    `SUPABASE_SERVICE_ROLE_KEY` is a finding: reading that variable at all
+ *                    client-side means the `lib/db/admin.ts` import boundary is already gone.
+ *   `.next/server/` (server output) — service-role credential *shapes* only, **no name checks**.
+ *                    Server output is *supposed* to contain the env contract, and that contract
+ *                    names every variable by definition. Bare-name matching here produced a
+ *                    false positive as soon as one route imported `@/lib/env`, failing the gate
+ *                    on a variable that route never reads.
+ *
+ * The lesson, having got this wrong twice: a bare identifier is not a secret. Match values
+ * everywhere; match names only where a name is itself the violation.
  *
  * Exit codes: 0 clean · 1 findings · 2 build output missing (i.e. `pnpm build` was skipped).
  */
@@ -51,13 +57,11 @@ import { join, relative } from "node:path";
 interface ScanRoot {
   readonly dir: string;
   readonly scope: string;
-  readonly serviceRoleOnly: boolean;
+  /** Credential shapes to match. */
+  readonly values: readonly Rule[];
+  /** Bare-name checks. Client bundle only — see {@link SERVICE_ROLE_REFERENCE_PATTERNS}. */
+  readonly references: readonly Rule[];
 }
-
-const ROOTS: readonly ScanRoot[] = [
-  { dir: ".next/static", scope: "client bundle", serviceRoleOnly: false },
-  { dir: ".next/server", scope: "server output", serviceRoleOnly: true },
-];
 
 const EXTENSIONS = new Set([".js", ".mjs", ".cjs", ".json", ".html", ".css", ".map", ".txt"]);
 
@@ -87,13 +91,50 @@ const SECRET_PATTERNS: readonly Rule[] = [
 ];
 
 /**
- * The one thing that must never appear in the client bundle, in any form — checked as a bare
- * *name* rather than a shape, because this is a variable, not a credential. Reading it at all
- * in a client chunk means the import boundary in `lib/db/admin.ts` has already been breached.
+ * Service-role credential *shapes* — checked in the client bundle AND the server output.
+ *
+ * These match an actual credential, so a hit means a key is genuinely present.
  */
-const SERVICE_ROLE_PATTERNS: readonly Rule[] = [
-  { name: "SUPABASE_SERVICE_ROLE_KEY reference", re: /SUPABASE_SERVICE_ROLE_KEY/ },
+const SERVICE_ROLE_VALUE_PATTERNS: readonly Rule[] = [
+  { name: "Supabase secret key", re: /\bsb_secret_[A-Za-z0-9_-]{20,}/g },
+  { name: "Supabase legacy JWT", re: /\beyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g },
   { name: "service-role JWT claim", re: /"?service_role"?\s*[:,]/ },
+];
+
+/**
+ * The variable *name* — client bundle only, never the server output.
+ *
+ * Reading `SUPABASE_SERVICE_ROLE_KEY` at all in a client chunk means the import boundary in
+ * `lib/db/admin.ts` has already been breached. That reasoning does **not** transfer to server
+ * output, and checking it there produced a false positive the moment any route imported
+ * `@/lib/env`: the Zod schema object legitimately contains the key name
+ * `SUPABASE_SERVICE_ROLE_KEY:`, so `src/app/(auth)/auth/callback/route.ts` — which reads
+ * `env.NEXT_PUBLIC_SUPABASE_ANON_KEY`, a public value — failed the gate on the *name* of a
+ * variable it never touches.
+ *
+ * This is the same names-vs-values trap the script was written to escape, reintroduced one
+ * level up: a bare identifier is not a secret, and the server bundle is *supposed* to contain
+ * the contract that names every variable.
+ */
+const SERVICE_ROLE_REFERENCE_PATTERNS: readonly Rule[] = [
+  { name: "SUPABASE_SERVICE_ROLE_KEY reference", re: /SUPABASE_SERVICE_ROLE_KEY/ },
+];
+
+// Declared after the pattern tables above: `ROOTS` composes them, and a `const` referenced
+// before its declaration is a TDZ ReferenceError at module load.
+const ROOTS: readonly ScanRoot[] = [
+  {
+    dir: ".next/static",
+    scope: "client bundle",
+    values: [...SECRET_PATTERNS, ...SERVICE_ROLE_VALUE_PATTERNS],
+    references: SERVICE_ROLE_REFERENCE_PATTERNS,
+  },
+  {
+    dir: ".next/server",
+    scope: "server output",
+    values: SERVICE_ROLE_VALUE_PATTERNS,
+    references: [],
+  },
 ];
 
 /** Env vars whose *values* must not appear anywhere in the output. */
@@ -167,7 +208,7 @@ function main(): void {
   let scanned = 0;
 
   for (const root of ROOTS) {
-    const rules = root.serviceRoleOnly ? SERVICE_ROLE_PATTERNS : [...SECRET_PATTERNS, ...SERVICE_ROLE_PATTERNS];
+    const rules = [...root.values, ...root.references];
 
     for (const file of walk(root.dir)) {
       scanned += 1;

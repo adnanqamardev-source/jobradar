@@ -208,13 +208,30 @@ minified identifier ending in those two characters. Meanwhile it greps for *name
 leak — `sb_secret_<the actual key>` — is no better matched than noise. A gate that always fails
 teaches the team to ignore it, which is worse than no gate.
 
-`scripts/scan-bundle-secrets.mjs` replaces it with three layers: 9 credential **shapes**, each
-requiring 20+ characters of key material after the prefix (a bare prefix is not a credential);
+`scripts/scan-bundle-secrets.ts` replaces it with credential **shapes** (each requiring 20+
+characters of key material after the prefix — a bare prefix is not a credential) plus
 exact-value matching against the live values of 8 secret env vars, which catches *this*
-deployment's key even if its shape is unfamiliar; and a `SUPABASE_SERVICE_ROLE_KEY` **reference**
-check, because reading the variable at all in a client chunk means the import boundary is
-already breached. Verified in both directions — planted `sb_secret_` fails, ordinary minified
-code containing `supabase`/`sk-` passes.
+deployment's key even if its shape is unfamiliar.
+
+**Scan boundary — corrected again 2026-10-04, after the same mistake recurred.** The scan is
+three-tier, and the tier is the whole point:
+
+| Tier | Credential values | Bare names (`SUPABASE_SERVICE_ROLE_KEY`) |
+|---|---|---|
+| `.next/static/` — client bundle | yes | **yes** |
+| `.next/server/` — server output | service-role shapes only | **no** |
+
+Bare-name matching belongs in the client bundle *only*. Reading that variable client-side means
+the `lib/db/admin.ts` import boundary is already gone, so the name is itself the violation. It
+does **not** transfer to server output: the server bundle is *supposed* to contain the env
+contract, and that contract names every variable by definition. Checking names there produced a
+false positive the moment `auth/callback/route.ts` imported `@/lib/env` — the Zod schema bundles
+into server output, so a route reading only `NEXT_PUBLIC_SUPABASE_ANON_KEY` (a public value)
+failed the gate on the *name* of a variable it never touches.
+
+A bare identifier is not a secret. Match values everywhere; match names only where a name is
+itself the violation. All four quadrants are asserted: `sb_secret_` value in server output →
+fail; name in client bundle → fail; name in server output → pass; clean build → pass.
 
 Exit codes: `0` clean, `1` findings printed, `2` build output missing (i.e. `pnpm build` was
 skipped — not a pass).
