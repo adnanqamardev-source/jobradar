@@ -7,25 +7,28 @@ import prettierConfig from "eslint-config-prettier";
 // Implemented as per-file overrides — `no-restricted-imports` has no
 // conditional predicate, so the "allowed" list is expressed as the
 // complement: block everywhere, then un-block the sanctioned files.
-const SERVICE_ROLE_ALLOWED = [
+//
+// Both lists are EXPORTED. tests/unit/eslint-guard.test.ts asserts against them rather
+// than restating them, which is what makes it an oracle: before, a new entry added here
+// was invisible to the test, and a new path added to the test proved nothing about this
+// config. One policy, one home. See docs/02 §4 rule 3.
+export const SERVICE_ROLE_ALLOWED = [
   "src/lib/db/admin.ts",
   "src/lib/queue/**",
   "src/app/api/cron/**",
   "src/app/api/webhooks/**",
+  // Beyond the three paths named in docs/02 §4: neither is reachable from the client
+  // bundle, and the integration suite has to be able to drive the queue handlers it is
+  // testing. Blocking them would break scripts/queue-drain.ts and the RLS tests.
   "scripts/**",
   "tests/**",
 ];
 
 // ENG-001 "Done when" #6 / AGENTS.md hard constraint: `src/lib/db/admin.ts` may
 // only be imported from the worker paths. This is the rule that was missing —
-// the `no-restricted-imports` entry above guards the *other* direction (direct
+// the `no-restricted-imports` entry below guards the *other* direction (direct
 // `@supabase/supabase-js` imports) and never blocked this one.
-//
-// `scripts/**` and `tests/**` are included beyond the three paths named in
-// ENG-001 because neither is reachable from the client bundle, and the
-// integration suite has to be able to drive the queue handlers it is testing.
-// Blocking them would break `scripts/queue-drain.ts` and the RLS tests.
-const ADMIN_ALLOWED = [
+export const ADMIN_ALLOWED = [
   "src/lib/queue/**",
   "src/app/api/cron/**",
   "src/app/api/webhooks/**",

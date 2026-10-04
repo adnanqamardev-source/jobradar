@@ -1,23 +1,30 @@
 # Implementation Plan — Phase 0 Completion → Phase 2
 
-**Status:** docs and tooling updated 2026-10-03. All spec defects D1–D7, D11 and D12 are now
+**Status:** refreshed 2026-10-03 (second session). All spec defects D1–D7, D11 and D12 are
 resolved — see the decision log in §6. The two ENG-001 gaps found in §2.1a (the service-role
 import rule and the secret scanner) are **fixed and tested**; the scaffold gaps (no page, inert
 Tailwind, no `eslint-config-next`) are **still open** and are Step 0.5.
-**Blocked on:** WSL2 (see §1.7). Until `wsl --install` has been run as Administrator and the
-machine rebooted, no database work, no Testcontainers, and no `supabase db reset` can happen.
-**Author:** agent session, 2026-10-03
+**Blocked on:** ~~WSL2~~ — **CLEARED.** WSL2 is installed and the Docker engine was verified
+running this session (§1.7). Database work, Testcontainers and `supabase db reset` are now
+unblocked. The one remaining environment blocker is that **there is still no git remote** (§1.1),
+which blocks FND-005 only.
+**Author:** agent session, 2026-10-03. Scope inventory re-verified 2026-10-03 — see §1.8.
 
 ---
 
 ## 0. The short version, in plain words
 
-**Where the project is.** Nothing has been built yet. The folders exist but are empty. No
-database tables, no screens, no tests for real features. The planning documents are done.
+**Why it was stuck, and what changed.** Until this session the answer was one thing: **Docker
+could not start on this computer**, because WSL2 was not installed. **That is now fixed.** WSL2
+is installed (`wsl -l -v` lists `Ubuntu` and `docker-desktop`, both Version 2) and the Docker
+engine was started and verified this session — a container ran and `postgres:17-alpine` pulled
+cleanly (§1.7). Database work, the RLS tests and `supabase db reset` are all unblocked.
 
-**Why it is stuck.** One thing only: **Docker cannot start on this computer**, because WSL2 is
-not installed. Until that is fixed we cannot create the database, cannot run the security tests,
-and cannot prove any of the work is correct. The fix is one command and a restart — see §1.7.
+**Where the project actually is.** The folder map and tooling are real; the application is not.
+There are **four TypeScript source files** (env schema + binding, queue planner, queue
+constants), **825 lines of tests across four files**, and **zero** database tables, screens, or
+feature code. Phase 1 work (the queue planner) has started ahead of Phase 0 in one small,
+well-tested corner. Full inventory in §1.8.
 
 **What was found and fixed in the documents.** Twelve contradictions between the planning
 documents were found and written down correctly. The two that mattered most:
@@ -29,15 +36,18 @@ documents were found and written down correctly. The two that mattered most:
   security rules**. Both are now written down correctly — §5.9 of `docs/02`.
 
 **What was found and is still broken in the code.** One ticket, ENG-001, was marked done but
-is not. There is no page to load, no stylesheet, and the security rule protecting the admin
-database key is pointing the wrong way. §2.1a lists all of it. Step 0.5 fixes it.
+is not. There is still no page to load and Tailwind is still inert. (The third item in that
+audit — the security rule protecting the admin database key — was pointing the wrong way and is
+**now fixed and pinned by tests**.) §2.1a lists all of it. Step 0.5 fixes what remains.
 
 **What is needed from a human, and it is short:**
 
-1. Run `wsl --install` in an Administrator PowerShell, then restart the computer.
-2. Add a git remote and push — nothing has ever been pushed anywhere.
-3. Rotate the OpenRouter API key that was pasted into a chat.
-4. Choose a secret scanner (D12). Everything else is already decided and written down.
+1. **Add a git remote and push** — nothing has ever been pushed anywhere. This is the only
+   remaining environment blocker, and it blocks FND-005 (CI) exclusively.
+2. Rotate the OpenRouter API key that was pasted into a chat.
+3. *Done, no action:* WSL2 is installed. *Done:* the secret scanner is chosen (D12).
+
+Everything else is already decided and written down.
 
 **How to read the rest of this document.** §1 is what is true right now. §2 is what is wrong.
 §3 is the order to fix it. §5 is what could go wrong. §6 lists every decision and where it was
@@ -49,36 +59,57 @@ written. If you only read two sections, read §1.7 and §6.
 
 ### 1.1 Repository
 
-Checked on 2026-10-03. "Missing" means the folder exists but holds nothing but a `.gitkeep`
-placeholder file.
+Re-verified 2026-10-03, second session. "Missing" means the folder exists but holds nothing but a
+`.gitkeep` placeholder file. **Every row below was re-checked this session** — the previous
+table's HEAD, tree state and test counts were stale.
 
 | Fact | What is actually there | How it was checked |
 |---|---|---|
-| Branch / HEAD | `main` @ `9a9e67c` | `git log --oneline -1` |
-| Working tree | **Clean, except this file.** `docs/07` itself is not committed yet. | `git status --short` → one `??` line |
+| Branch / HEAD | `main` @ `6b7bffe` ("fix: enforce service-role import guard, make secret scan real") | `git log --oneline -8` |
+| Working tree | **Dirty — 13 entries.** 7 modified, 1 deleted (`src/lib/env.ts`), 5 untracked (`src/lib/env/`, `src/lib/queue/plan.ts`, `src/lib/queue/constants.ts`, `tests/unit/queue-plan.test.ts`, `eslint.config.d.mts`) | `git status --short` |
 | Git remote | **None.** No `origin`, no upstream. Nothing has ever been pushed. | `git remote -v` → empty |
-| `supabase/migrations/` | **0 SQL files** — no schema has ever been created | `Get-ChildItem -Filter *.sql` |
-| `src/types/` | Missing (`.gitkeep` only) — the type contract Phase 1 needs does not exist | `Get-ChildItem` |
-| `src/lib/scoring`, `src/lib/ingest` | Missing (empty) | `Get-ChildItem` |
-| `src/components/**` | Missing (0 files) — correct, Phase 2 has not started | `Get-ChildItem -Recurse` |
+| `supabase/migrations/` | **0 SQL files** — holds only `.gitkeep`. No schema has ever been created. | `Get-ChildItem supabase\migrations` |
+| `src/lib/env/` | **Split this session, uncommitted.** `schema.ts` (177 lines, pure) + `index.ts` (40 lines, binds `process.env`, throws at import) | `git status --short` |
+| `src/lib/queue/` | **New, uncommitted.** `plan.ts` (227 lines) + `constants.ts` (32 lines) — Phase 1 work | `git status --short` |
+| `src/types/` | Missing (`.gitkeep` only) — the type contract Phase 1 needs does not exist | `git ls-files` |
+| `src/lib/scoring`, `src/lib/ingest` | Missing (empty `.gitkeep`) | `git ls-files` |
+| `src/components/**` | Missing (0 files) — correct, Phase 2 has not started | `git ls-files` |
 | `src/app/**` | **23 placeholder files. No `layout.tsx`, no `page.tsx` anywhere.** | `git ls-files -- src/app` |
 | `.github/workflows/` | Exists, holds one `.gitkeep`. **No workflow files.** | `git ls-files` |
+| `tailwind.config.ts` | **Still present — D7 says delete it.** Tailwind 4 ignores this file; it is dead config. | `Get-Content tailwind.config.ts` |
+| `.env.example` | **32 variables**, all blank or defaults. (Was 28 in the previous audit — `docs/02` §7.1 grew.) | count of `^[A-Z0-9_]+=` |
 | Supabase CLI | **Installed and working** — `2.119.0`, pinned in `devDependencies`, project-local in `node_modules/.bin` | `pnpm exec supabase --version` |
-| Docker Desktop | **Installed but cannot run.** See §1.7 — this is the main blocker. | `docker version` → HTTP 500 |
-| `.env.local` | Present, gitignored, not tracked | `git check-ignore -v` → `.gitignore:7` |
+| WSL2 | **Installed.** `Ubuntu` and `docker-desktop` both registered, Version 2. `wsl -d Ubuntu -- echo` succeeds. | `wsl -l -v`, `wsl --status` |
+| Docker Desktop | **Installed and RUNNING.** Engine 29.8.1; `alpine:3.20` ran a container; `postgres:17-alpine` pulled. | `docker version`, `docker run`, `docker pull` |
+| `.env.local` | Present, gitignored, not tracked | `git check-ignore -v` |
 
-### 1.2 Verification commands (re-run 2026-10-03)
+### 1.2 Verification commands (re-run 2026-10-03, second session)
 
 ```
-pnpm typecheck   → exit 0
-pnpm lint        → exit 0
-pnpm test        → Test Files 2 passed (2) · Tests 18 passed (18) · exit 0
+pnpm typecheck   → exit 0, no diagnostics
+pnpm lint        → exit 0, no output
+pnpm test        → exit 0 · Test Files 4 passed (4) · Tests 96 passed (96) · 2.36s
 pnpm build       → exit 0, but see below
 ```
 
-**What those results do and do not prove.** The three checks prove the tooling is wired up and
-the 18 environment-validation tests pass. They do **not** prove any feature works — there are no
-features yet, and the suite touches nothing but `src/lib/env.ts`.
+**Up from 2 files / 18 tests to 4 files / 96 tests.** The new tests are `queue-plan.test.ts`
+(42 cases, docs/02 §6.4) and the grown `eslint-guard.test.ts`. The suite now covers the env
+contract *and* the queue protocol.
+
+**Two shell traps, both hit this session.** Read them before trusting a red result:
+
+- **`pnpm lint` reports a fake failure.** PowerShell's wrapper renders ESLint's stderr echo as
+  `NativeCommandError`, so a clean run looks like it threw. Judge ESLint by
+  `node node_modules/eslint/bin/eslint.js .; $LASTEXITCODE` — it exits 0 silently.
+- **`pnpm typecheck` installs dependencies first.** It printed a full package list before
+  running `tsc`. `pnpm config get verify-deps-before-run` is `undefined`, so pnpm 12's default
+  pre-run verification is doing it. Harmless, but it means a "verification" command can mutate
+  `node_modules`.
+
+**What those results do and do not prove.** The three checks prove the tooling is wired up, the
+96 env/queue/scaffold/guard cases pass, and nothing regressed. They do **not** prove any feature
+works — there are no features yet. The suite touches only `src/lib/env/`, `src/lib/queue/`, and
+the guard config.
 
 The build "passing" is misleading, and this is the clearest example in the repo of a green check
 hiding nothing. The full route table is:
@@ -104,6 +135,8 @@ pnpm test:e2e    → No Playwright specs exist yet.
 
 ### 1.3 Remote database (Supabase MCP, live queries)
 
+**Re-verified 2026-10-03, second session — every row below is unchanged.**
+
 | Fact | Value |
 |---|---|
 | Project | `diuwzagrpqhlutbqdvrs` |
@@ -114,17 +147,29 @@ pnpm test:e2e    → No Playwright specs exist yet.
 | RLS policies | **0** (`pg_policies` count = 0) |
 | `auth` schema | exists (1) |
 
+**Detail that matters for FND-002:** `vector` 0.8.2 is installed into schema **`public`**, not
+`extensions`. `uuid-ossp` 1.1, `pgcrypto` 1.3 and `pg_stat_statements` 1.11 live in
+`extensions`. FND-002's `create extension` statements must not assume a uniform schema.
+
 ### 1.4 Extensions
+
+**Re-verified 2026-10-03 — unchanged.** All five extensions FND-002 needs are *available* on the
+remote; none but `vector` and `pgcrypto` are installed.
 
 | Extension | Available | Installed |
 |---|---|---|
-| `vector` | 0.8.2 | **0.8.2** ← installed by this session's probe, see §1.6 |
+| `vector` | 0.8.2 | **0.8.2** — in schema `public`, installed by the first session's probe, see §1.6 |
 | `pg_cron` | 1.6.4 | no |
 | `pg_trgm` | 1.6 | no |
 | `btree_gin` | 1.3 | no |
 | `fuzzystrmatch` | 1.2 | no |
-| `pgcrypto` | — | yes (pre-existing) |
-| `pg_stat_statements` | — | yes (pre-existing) |
+| `pgcrypto` | 1.3 | yes 1.3 (pre-existing, schema `extensions`) |
+| `pg_stat_statements` | 1.11 | yes 1.11 (pre-existing, schema `extensions`) |
+| `uuid-ossp` | 1.1 | yes 1.1 (pre-existing, schema `extensions`) |
+
+**Still unproven:** whether `pg_cron` can actually be *created* on this remote. Availability is
+not permission. §5 treats this as the top technical risk; resolving it needs a write, so it is
+listed as a human decision in §7 rather than something to just try.
 
 ### 1.5 LLM provider (verified live with the real key)
 
@@ -144,44 +189,45 @@ and dropped a throwaway table `_probe_dims`.
   during a read-only investigation. `DROP EXTENSION vector` reverts it if you prefer a
   pristine database.
 
-### 1.7 Docker is installed but cannot run — the main blocker
+### 1.7 Docker and WSL2 — RESOLVED, verified this session
 
-Docker Desktop **4.93.0** is installed, per-user, at
-`%LOCALAPPDATA%\Programs\DockerDesktop` (not `Program Files`, which is why `docker` may not be
-found on PATH). The `docker` client itself works — version 29.8.1.
+**This section previously reported a hard blocker. That blocker no longer exists.** WSL2 has
+since been installed and the Docker engine was started and verified on 2026-10-03.
 
-**But it cannot start a single container.** The Linux engine answers with HTTP 500, and
-`log/vm/init.log` is empty, meaning the virtual machine never started.
+| Check | Then (first session) | **Now (verified)** |
+|---|---|---|
+| WSL optional feature | not installed | **installed** |
+| Registered WSL distributions | none | **`Ubuntu` and `docker-desktop`, both Version 2** |
+| `wsl -d Ubuntu -- echo …` | n/a | **`WSL2_OK` — a distro boots and executes** |
+| `wsl --status` default version | n/a | **2** |
+| Docker engine | HTTP 500, VM never booted | **`29.8.1` — engine up** |
+| Container execution | impossible | **`alpine:3.20` ran, printed `CONTAINER_OK`** |
+| Image pull | impossible | **`postgres:17-alpine` pulled successfully** |
 
-The reason is that **WSL2 is not installed on this machine**:
+Docker Desktop is installed per-user at `%LOCALAPPDATA%\Programs\DockerDesktop` (not
+`Program Files`, which is why `docker` may be missing from a shell's PATH). It was **not running**
+— the engine pipe `dockerDesktopLinuxEngine` was absent. Launching the executable fixed it:
 
-| Check | Result |
-|---|---|
-| WSL optional feature | not installed |
-| `VirtualMachinePlatform` optional feature | not installed |
-| WSL2 kernel files | absent |
-| Any registered WSL distribution | none |
-| Virtualisation enabled in firmware | yes — the CPU side is fine |
-
-Docker Desktop on Windows needs WSL2 to run its engine. Without it there is nothing to boot.
-
-**One trap worth knowing:** `wsl --list --online` exits 0 and prints a list of distributions,
-which makes WSL look installed. That command only downloads a catalogue from the internet and
-never touches the feature. The honest test is `wsl -l -v`, which prints a usage message and
-exits 1 when the feature is missing.
-
-**To fix it**, from a PowerShell window opened as Administrator:
-
-```
-wsl --install
+```powershell
+Start-Process "$env:LOCALAPPDATA\Programs\DockerDesktop\Docker Desktop.exe"
 ```
 
-Then **restart the computer**. This cannot be done from an ordinary shell — it needs
-Administrator rights and a reboot.
+The engine answered within ~6 seconds. **It does not survive a reboot in this state** — if the
+daemon is missing again next session, launch it the same way before anything else.
 
-**What this blocks:** `supabase db reset`, `supabase start`, and Testcontainers. That means the
-P0→P1 gate in `docs/06` §8.2 cannot be proven locally, and the decision in §6 (D10) cannot be
-tested.
+**Why `postgres:17-alpine` matters:** it matches the remote project's Postgres 17.11, so the
+image Testcontainers needs is confirmed pullable and the version line-up is right. This was the
+image D10's decision hinged on.
+
+**The `wsl --list --online` trap is still worth keeping.** That command exits 0 and prints a list
+of distributions, which makes WSL look installed even when the feature is absent — it only
+downloads a catalogue from the internet and never touches the optional feature. The honest test
+is `wsl -l -v` (prints registered distros and versions) or `wsl -d Ubuntu -- echo ok` (proves it
+boots). **Never conclude WSL is present from `--online`, and never conclude it is absent from
+`Get-Command` alone.**
+
+**What this unblocks:** `supabase db reset`, `supabase start`, Testcontainers, and the P0→P1 gate
+in `docs/06` §8.2. D10 (CI Postgres image) is now testable instead of pending.
 
 ### 1.8 The secret scanner — was broken, now fixed
 
@@ -223,15 +269,139 @@ and its full git history both scan clean.
 
 ---
 
+### 1.9 Complete codebase scope (verified 2026-10-03)
+
+An exhaustive inventory, so the next session starts from facts rather than from a folder listing
+that may be half-remembered. Counts are real: `git ls-files` for tracked files, `Get-ChildItem`
+for untracked, and line counts from disk.
+
+#### 1.9.1 Size of the whole thing
+
+| Measure | Count |
+|---|---|
+| Tracked files | **83** |
+| TypeScript source files (`src/**`, non-`.gitkeep`) | **4** |
+| Source lines | **476** |
+| Test files | **4** |
+| Test lines | **825** |
+| Test cases (Vitest-reported) | **96** |
+| SQL migration files | **0** |
+| Components | **0** |
+| Routes (`page.tsx` / `route.ts`) | **0** |
+| CI workflows | **0** |
+| Commits | 8 · HEAD `6b7bffe` |
+
+**The codebase is smaller than its folder tree.** Roughly 60 of the 83 tracked files are
+`.gitkeep` placeholders or the seven spec documents.
+
+#### 1.9.2 Every real source file
+
+| File | Lines | Phase | What it does |
+|---|---|---|---|
+| `src/lib/env/schema.ts` | 177 | FND-001 | The env contract. **Pure** — `parseEnv(input)` takes a record, returns a result, touches nothing. 32 variables. Helpers `blank()` / `blankDefault()` map `""` → `undefined` so `VAR=` doesn't fail boot. Custom RFC 5322 `emailAddress` refine accepts `JobRadar <hi@example.com>`. `freeModel` refuses any id not ending `:free`. |
+| `src/lib/env/index.ts` | 40 | FND-001 | **The only impure module.** `export const env = bindProcessEnv()` throws at import when misconfigured. Application code imports this; tests import `schema.ts`. |
+| `src/lib/queue/plan.ts` | 227 | **Phase 1** | The `task_queue` protocol as pure functions: `planClaim` (order → eligibility → cap), `leaseFor`, `isRunnable`, `backoffFor`, `settleTask`, `needsAuditLog`. Injected clock, never `Date.now()`. Exists because the protocol was inline in the drain script and had drifted from `docs/02` §6.4 in 13 places. |
+| `src/lib/queue/constants.ts` | 32 | **Phase 1** | `LEASE_MS` (5 min), `MAX_BATCH` (25), `MAX_ATTEMPTS_DEFAULT` (3), `LOCAL_WORKER_ID`. Spec values, not tunables. |
+| `scripts/queue-drain.ts` | 204 | **Phase 1** | Executor only — performs the plan, decides nothing. Compare-and-swap claim instead of `SKIP LOCKED` (FND-002 must add the RPC). Releases claimed tasks with `last_error` rather than falsely marking them done. |
+
+#### 1.9.3 Test inventory — what the 96 cases actually pin
+
+| File | Lines | `describe` / `it` | Pins |
+|---|---|---|---|
+| `tests/unit/env.test.ts` | 259 | 7 / 25 | The env contract: required vs. blank, `CRON_SECRET` ≥ 32, `:free` model enforcement, documented `EMAIL_FROM` example, defaults |
+| `tests/unit/queue-plan.test.ts` | 349 | 12 / 42 | `docs/02` §6.4. Many tagged `regression:` — lease-in-`run_after`, attempts-incremented-on-claim, kind-filtered-after-`limit`, stale lease on re-queue, backoff exponent off-by-one |
+| `tests/unit/eslint-guard.test.ts` | 180 | 4 / 4 | The service-role guard, asserted against the **exported** allow-lists so config and test cannot drift |
+| `tests/unit/scaffold.test.ts` | 37 | 1 / 3 | Harness smoke: `package.json` sane, `.env.local` ignored, `tokens.css` declares `--` custom properties |
+
+`tests/integration/` and `tests/e2e/` contain **`.gitkeep` only** — no fixtures, no specs.
+
+#### 1.9.4 Configuration inventory
+
+| File | State | Note |
+|---|---|---|
+| `tsconfig.json` | ✅ | `strict`, `noUncheckedIndexedAccess`, `@/*` → `./src/*` |
+| `eslint.config.mjs` | ✅ | Flat config, type-checked. Exports `SERVICE_ROLE_ALLOWED` + `ADMIN_ALLOWED` so the test can import them. Hex-literal ban live. |
+| `vitest.config.mts` | ✅ | `@` alias (Vitest doesn't read tsconfig paths), `environment: node`, `fileParallelism: false` |
+| `playwright.config.ts` | ⚠ | 3 projects, `webServer: pnpm dev` on a **hardcoded** `localhost:3000` |
+| `next.config.ts` | ✅ | Strict security headers, `poweredByHeader: false`, 2 image hosts |
+| `package.json` | ✅ | **All versions pinned exactly.** Scripts per `AGENTS.md`. `queue:drain` uses `tsx --env-file` (no dotenv). |
+| `pnpm-workspace.yaml` | ✅ | `allowBuilds: { simple-git-hooks, esbuild }` — v12 key, not the removed `onlyBuiltDependencies` |
+| `.gitleaks.toml` | ✅ | Custom rules for Supabase / OpenRouter / Stripe — built-ins have none |
+| `.simple-git-hooks.json` | ✅ | `pre-commit: pnpm secret:scan` |
+| `.env.example` | ✅ | 32 vars, no real values |
+| `supabase/config.toml` | ✅ | present |
+| `supabase/seed.sql` | ⚠ | 33 lines. Inserts 10 skills + 9 sources. **Cannot run — `skills` and `sources` tables don't exist.** |
+| `src/styles/tokens.css` | ⚠ | 178 lines. Holds `@import "tailwindcss"` **and** base element styles (body, `.mono`, `.label`, focus rings, reduced-motion). See 1.9.6. |
+| `tailwind.config.ts` | ❌ | **Tailwind 3 shape. Tailwind 4 ignores it. D7 says delete it; it is still here.** |
+| `postcss.config.{mjs,js,ts}` | ❌ | **Does not exist** |
+| `eslint.config.d.mts` | ❌ | Untracked build artifact from `tsc` on the flat config |
+
+#### 1.9.5 Dependencies — declared but not yet imported
+
+Scanned `src/`, `scripts/`, `tests/` for `.ts`/`.tsx` only, so config-file imports
+(`@eslint/js`, `typescript-eslint`, `eslint-config-prettier`, `@playwright/test`) show as unused
+here but **are** in use. Nothing is imported without being declared.
+
+| Declared, zero imports | Backs | Why it's fine / not |
+|---|---|---|
+| `react`, `react-dom`, `@types/react`, `@types/react-dom` | Next runtime | Needed the moment any component exists |
+| 5 × `@radix-ui/*` | Phase 2/3 | Intentional — Radix **unstyled from day one** (`docs/06` §8.4) |
+| `@sentry/nextjs` | **FND-004** | Step 3. Not yet written. |
+| `@supabase/ssr` | Phase 1 auth | No `src/lib/auth/` code |
+| `clsx`, `tailwind-merge` | Phase 2 | `src/lib/utils/` is empty |
+| `lucide-react` | Phase 3 | Icons are presentation |
+| `react-email` | FND email | `src/lib/email/templates/` is empty |
+| **`tailwindcss`** + **`postcss`** | Step 0.5b | **⚠ Not merely unused — unusable.** No PostCSS config and no CSS entrypoint, so `@import "tailwindcss"` in `tokens.css` is never processed. This is the concrete proof Tailwind is inert. |
+| `@vitest/coverage-v8` | P1→P2 gate | No coverage thresholds configured; the ≥85% gate lands in Phase 1 |
+| `@testing-library/jest-dom` | Phase 2 | `vitest` `environment` is `node`; no DOM tests exist |
+
+#### 1.9.6 Known inconsistencies found this session
+
+These are new. None is in the previous audit.
+
+1. **`tailwind.config.ts` contradicts D7.** The decision log says delete it because Tailwind 4
+   ignores it. It is still present and still tracked. Either delete it or amend D7 — do not leave
+   the decision and the tree disagreeing.
+2. **`tokens.css` is doing two jobs.** It is the token file *and* the de-facto global stylesheet
+   (base body type, `.mono`, `.label`, `:focus-visible` rings, `prefers-reduced-motion`). Step 0.5a/0.5b assume a separate `src/app/globals.css`. Decide the split before writing either, or the two steps will fight.
+3. **Presentation CSS exists before Phase 3.** The focus-ring and reduced-motion blocks in
+   `tokens.css` are Phase 3 work (`docs/06` §8.3). Harmless in a token file, but worth noting so
+   it is not mistaken for Phase 3 being done.
+4. **`seed.sql` is ahead of the schema.** It writes to `skills` and `sources`, which FND-002 has
+   not created. It cannot run until Step 1 lands — so `supabase db reset` will fail even once
+   Docker works, until then.
+5. **`eslint.config.d.mts` is an untracked artifact.** Generated by `tsc` against the flat config;
+   should be gitignored or the declaration files cleaned up.
+
+#### 1.9.7 What FND-002 has to create (scope of Step 1)
+
+Per `docs/02` §5 — **13 enums, 19 tables**, plus indexes, one view, three functions.
+
+- **Enums (13):** `user_role`, `job_status`, `work_mode`, `seniority`, `employment_type`,
+  `prof_level`, `app_stage`, `task_status`, `task_kind`, `run_status`, `source_kind`,
+  `plan_tier`, `digest_channel`.
+- **Tables (19), FK-safe creation order:** `skills` → `companies` → `sources` → `task_queue` →
+  `scrape_runs` → `jobs` → `job_skills` → `profiles` → `profile_skills` → `resume_versions` →
+  `subscriptions` → `job_scores` → `job_events` → `applications` → `application_events` →
+  `saved_searches` → `digests` → `usage_events` → `audit_logs`.
+- **Also in Step 1:** 5 extensions · `halfvec` expression HNSW index (D2) · 10 FK indexes (D6) ·
+  `v_ranked_jobs` with `security_invoker = true` (D5) · functions `recent_for_user`,
+  `move_application`, trigger `sync_profile_role_to_jwt` · **and the `claim_task_queue` RPC that
+  `scripts/queue-drain.ts` is currently working around.**
+- **Not created by Step 1:** RLS policies and `force row level security` are Step 2
+  (`0002_rls.sql`), per the forward-only migration rule.
+
+---
+
 ## 2. Conformity Check Against the Spec
 
 ### 2.1 Gate status (`docs/06` §8.2)
 
 | Gate | Requirement | Status | Evidence |
 |---|---|---|---|
-| **P0 → P1** | `supabase db reset` from empty succeeds | ❌ **FAIL** | 0 migration files |
-| | RLS policy tests green | ❌ **FAIL** | 0 policies, 0 tests |
-| | CI green with zero features | ❌ **FAIL** | 0 workflows |
+| **P0 → P1** | `supabase db reset` from empty succeeds | ❌ **FAIL** | 0 migration files. **Now unblocked in principle** — Docker runs (§1.7). Note `seed.sql` would also fail until `skills`/`sources` exist (§1.9.6). |
+| | RLS policy tests green | ❌ **FAIL** | 0 policies, 0 tests. Testcontainers now viable. |
+| | CI green with zero features | ❌ **FAIL** | 0 workflows **and** still no git remote (§1.1) |
 | **P1 → P2** | BE tests green, no live API calls | ❌ **FAIL** | no BE code |
 | | `lib/scoring` + `lib/ingest` ≥85% | ❌ **FAIL** | directories empty |
 | | scorer deterministic | ❌ **FAIL** | no scorer |
@@ -256,7 +426,7 @@ ENG-001's own "Done when" list (`docs/05` lines 39–45) has six boxes. Two pass
 | `pnpm dev` boots with a placeholder page | ❌ | No `layout.tsx` or `page.tsx` exists anywhere. `src/app/**` is 23 `.gitkeep` files. `/` renders the built-in 404. |
 | `lint` / `typecheck` / `test` pass | ✅ | `pnpm typecheck` exits 0. |
 | Folder tree matches `docs/02` §4 | ⚠️ | The folders are there, but `docs/02` §4 itself was wrong — see D7/D11. |
-| `.env.example` complete, no real values | ✅ | 28 variables, all blank. |
+| `.env.example` complete, no real values | ✅ | **32** variables, all blank or defaults. |
 | `.gitignore` excludes `.env.local` + gitleaks pre-commit hook | ✅ **fixed 2026-10-03** | Wired via `simple-git-hooks`, real binary checksum-verified, `--staged` only. See §1.8. |
 | ESLint blocks `admin.ts` imports outside the sanctioned paths | ✅ **fixed 2026-10-03** | Was pointing the wrong way. `tests/unit/eslint-guard.test.ts` pins it. |
 
@@ -273,7 +443,18 @@ Fixed the same day. `eslint.config.mjs` now restricts both directions, and
 `tests/unit/eslint-guard.test.ts` (17 assertions) pins that five client-reachable paths error
 while five sanctioned paths stay open.
 
-**Still open from this audit:** no page renders, and Tailwind is inert.
+**Still open from this audit, re-confirmed by a fresh build this session:** no page renders, and
+Tailwind is inert.
+
+```
+pnpm build → exit 0
+Route (pages)                                Size  First Load JS
+─ ○ /404                                  2.28 kB         108 kB
+⚠ The Next.js plugin was not detected in your ESLint configuration.
+```
+
+One route, `/404`, and the missing-`eslint-config-next` warning — identical to the first audit.
+A green build is currently certifying a 404 page.
 
 ### 2.2 Spec defects found (must be fixed before transcription)
 
@@ -401,6 +582,36 @@ without them.
 Sequenced by `docs/06` §1. **Do not reorder.** Each ticket updates the docs it touches in the
 same commit.
 
+### Session start checklist — do these first, in order
+
+| # | Action | Why it is first |
+|---|---|---|
+| 1 | Read `notes.md`, then this §1 and §1.9 | `notes.md` forbids repeating a logged method |
+| 2 | `Start-Process "$env:LOCALAPPDATA\Programs\DockerDesktop\Docker Desktop.exe"`, then confirm `docker version` prints a **Server** version | The daemon does not survive a reboot (§5). Everything from Step 2 needs it |
+| 3 | `git status --short` — expect the 13 dirty entries from §1.1 | Step 0.75 exists because of them |
+| 4 | Decide **D13** (Tailwind file split) | Step 0.5a/0.5b will conflict if this is left open |
+| 5 | Confirm the baseline: `pnpm typecheck` → `pnpm lint` → `pnpm test` | Use `node node_modules/eslint/bin/eslint.js .` for lint — `pnpm lint` fakes a failure in PowerShell (§1.2) |
+
+**Then work Steps 0.5 → 0.75 → 1 → 2 → 3 → 4 → 5.** Step 0.5a is the highest-value single
+change in the plan: until `/` renders, every `pnpm build` passes while proving nothing.
+
+### The whole remaining plan, in one list
+
+| Step | Ticket | Size | Blocked by |
+|---|---|---|---|
+| 0.5a | Root layout + placeholder page | small | D13 |
+| 0.5b | Tailwind 4 wiring | small | D13 |
+| 0.5c | `eslint-config-next` | small | — |
+| 0.75 | Commit the dirty tree | small | — |
+| 1 | FND-002 — 13 enums, 19 tables, indexes, view, functions, claim RPC | **large** | — |
+| 2 | FND-003 — RLS on all 19 tables + Testcontainers suite | **large** | Step 1, Docker |
+| 3 | FND-004 — logger, error taxonomy, Sentry | medium | — |
+| 4 | FND-005 — CI workflow + deploy | medium | **git remote** |
+| 5 | Re-evaluate the P0→P1 gate | small | Steps 0.5–4 |
+
+Steps 0.5c, 3 and 0.75 have no dependencies and can be done in any order or in parallel with
+Step 1. Step 2 is the long pole.
+
 ### Step 0 — Resolve spec defects D1–D6, D11 (docs only, no code)
 
 **Status: applied 2026-10-03.** See the decision log in §6 for the outcome of each.
@@ -429,7 +640,7 @@ route instead of only `/404`.
 | # | Gap | Files | Constraint |
 |---|---|---|---|
 | **0.5a** | Root layout + placeholder page | `src/app/layout.tsx`, `src/app/globals.css`, `src/app/(marketing)/layout.tsx`, `src/app/(marketing)/page.tsx` | **Semantic markup only, zero styling** — Phase 3 owns presentation. No hex or px literals (the ESLint ban is already live). Must **not** import `@/lib/env`: that module throws at load when any of the 5 required vars is missing, which would make the CI build depend on secrets for no reason. Sanctioned by ENG-001 box 1 and `docs/02` §4. |
-| **0.5b** | Tailwind 4 wiring | `src/app/globals.css`, delete `tailwind.config.ts` | `@import "tailwindcss";` plus `postcss.config.mjs` and the `@tailwindcss/postcss` dependency. Mechanism only — token *values* belong to ENG-002. Spec now written in `docs/02` §4.1. |
+| **0.5b** | Tailwind 4 wiring | `src/app/globals.css`, delete `tailwind.config.ts`, new `postcss.config.mjs` | `@import "tailwindcss";` plus the `@tailwindcss/postcss` dependency. Mechanism only — token *values* belong to ENG-002. Spec now written in `docs/02` §4.1. **Verified gaps this session:** `postcss.config.*` does not exist in any form, `@tailwindcss/postcss` is not in `package.json`, and `tailwind.config.ts` is still present and tracked despite D7. `tokens.css` currently holds `@import "tailwindcss"` *and* base element styles — settle the split between it and the new `globals.css` before writing either. |
 | **0.5c** | `eslint-config-next` | `package.json`, `eslint.config.mjs` | Pin the exact version matching Next **15.5.27**. `notes.md` forbids `latest`. |
 | **0.5d** | Fix the `admin.ts` import rule | `eslint.config.mjs`, `tests/unit/eslint-guard.test.ts` | **✅ DONE 2026-10-03.** Rule now blocks both directions; 17 assertions pin it. |
 | **0.5e** | Working secret scanner | `.gitleaks.toml`, `.simple-git-hooks.json`, `pnpm-workspace.yaml`, `package.json`, `.gitignore` | **✅ DONE 2026-10-03.** See `docs/02` §4.2. |
@@ -439,6 +650,23 @@ route instead of only `/404`.
 
 **Exit evidence:** `pnpm typecheck` → `pnpm lint` → `pnpm test` → `pnpm build`, in that order,
 with the build output showing a real `/` route rather than only `/404`.
+
+### Step 0.75 — Land the dirty tree before touching the schema
+
+**New this session.** The working tree carries **13 uncommitted entries** (§1.1): the env split
+(`src/lib/env.ts` deleted → `src/lib/env/{schema,index}.ts` added), the new queue module and its
+42 tests, an edited `docs/02`, and a stray `eslint.config.d.mts`.
+
+These are real, passing, well-tested changes that belong to no commit. They should be committed
+as their own logical units — env split, then queue planner — before `0001_init.sql` lands, so the
+migration is reviewable on its own and so a schema regression can be bisected away from them.
+
+Also decide at this point: **is it acceptable that Phase 1 work started before Phase 0 closed?**
+The queue module is pure, needs no `task_queue` table, and is gated on nothing that FND-002
+provides, so it was not harmful — but it does mean `docs/07` §1 had to be rewritten to catch up.
+Note the decision in §6 rather than leaving it implicit.
+
+**Exit:** clean `git status --short`, with the env split and queue planner in separate commits.
 
 ### Step 1 — FND-002 Core schema
 
@@ -453,11 +681,27 @@ with the build output showing a real `/` route rather than only `/404`.
 4. Indexes (incl. D6 FK indexes, D2 expression HNSW)
 5. `v_ranked_jobs` (D5)
 6. Functions: `recent_for_user`, `move_application`, trigger `sync_profile_role_to_jwt`
+7. **`claim_task_queue` RPC** — `FOR UPDATE SKIP LOCKED`, which supabase-js cannot express.
+   `scripts/queue-drain.ts` currently uses a compare-and-swap workaround and says so in its
+   header; this RPC is what removes that workaround. Do not skip it: the queue is already written
+   against this contract.
 
 Apply via Supabase MCP `apply_migration`, then verify with `list_migrations` + `list_tables`
 (`docs/02` §7.3 warns that "up to date" against zero migrations means nothing was applied).
 
-**Exit:** 19 tables exist remotely, verified by MCP output pasted in the commit message.
+**Verify each clause, don't just check exit codes.** Per `AGENTS.md` Rule 0:
+
+- `list_tables` → **19 rows**, not an empty array.
+- `list_migrations` → contains `0001_init`.
+- Extensions installed: `pg_trgm`, `btree_gin`, `fuzzystrmatch` (and `pg_cron` if permitted —
+  see §7).
+- `select count(*) from pg_policies` → **0 at this stage by design.** RLS is Step 2. Zero here
+  is correct, not a failure.
+- **A failed `pg_cron` creation must not abort the migration.** If `create extension pg_cron`
+  errors, the whole migration rolls back and you get 0 tables. Create it last, or guard it.
+
+`supabase db reset` will additionally run `supabase/seed.sql`, which inserts into `skills` and
+`sources` — so local reset only goes green once *this* step lands (§1.9.6).
 
 ### Step 2 — FND-003 RLS
 
@@ -513,11 +757,12 @@ it starts blocking pull requests.
 
 ### Step 5 — Re-evaluate the P0→P1 gate
 
-Only after Steps 0–4. **This step cannot run until §1.7 is fixed** — `supabase db reset` needs
-Docker, and CI is not a substitute, because CI needs the same Postgres image to exist in the
-first place.
+Only after Steps 0–4. **This step is now runnable** — §1.7's blocker was resolved this session,
+so `supabase db reset`, `supabase start` and Testcontainers all work. CI remains a poor
+substitute for the local run: CI needs the same Postgres image to exist in the first place.
 
-Re-run `docs/06` §8.2 and paste the output. **Phase 1 does not start until this passes.**
+Re-run `docs/06` §8.2 and paste the output. **Phase 1 does not formally start until this passes** —
+though note Step 0.75 already put one Phase 1 module in the tree; see the note there.
 
 ### Step 6 — Phase 1 Back-End
 
@@ -549,9 +794,11 @@ No `dotenv` — Node's `--env-file` is already wired (`docs/02` §7.3).
 | Risk | Impact | Mitigation |
 |---|---|---|
 | pg_cron cannot be created on this remote project | `/api/cron/*` scheduling dead | Probe before Step 1. Fallback: Vercel Cron → Route Handlers (already in `docs/02` §2) |
-| **Docker cannot run (§1.7)** | `supabase db reset` and every Testcontainers test are unprovable. The P0→P1 gate cannot be closed. | Run `wsl --install` as Administrator, then reboot. **This is the only hard blocker.** CI is not a substitute — CI needs the same Postgres image to exist. |
-| **No git remote** | Nothing in Step 4 can be proven. No push means no CI run, no preview, no deploy. | `git remote add origin <url>` then push, before starting Step 4. |
-| **Secret scanner does not run (§1.8)** | FND-001's scanner requirement is unmet, and a leaked key would not be caught. | Pick an approach in D12. The npm `gitleaks` package must go either way — it is not the tool. |
+| ~~**Docker cannot run (§1.7)**~~ | — | **RESOLVED 2026-10-03.** WSL2 installed; engine verified running; `postgres:17-alpine` pulled. |
+| **Docker daemon not running after a reboot** | Every Testcontainers test and `supabase db reset` fail again, with a confusing `npipe` error | Launch `%LOCALAPPDATA%\Programs\DockerDesktop\Docker Desktop.exe` first. The engine answered in ~6s. Check with `docker version` reporting a **Server** version, not just a Client version. |
+| **No git remote** | Nothing in Step 4 can be proven. No push means no CI run, no preview, no deploy. | `git remote add origin <url>` then push, before starting Step 4. **Now the only environment blocker.** |
+| **`create extension pg_cron` fails on the remote** | It would roll back the whole `0001_init.sql`, leaving 0 tables | Create it **last** in the migration, or wrap it so a failure doesn't abort. Verify with `list_extensions`. Fallback per `docs/02` §2: Vercel Cron → Route Handlers. |
+| **`seed.sql` runs on `db reset` and inserts into tables Step 2 hasn't made** | A green Step 1 still fails at `db reset` | Expected and fine — RLS is Step 2. Confirm the failure is *only* the RLS/`force` step before treating it as a Step 1 regression. |
 | `halfvec` expression index recall loss | Semantic ranking slightly noisier | Re-rank the top results against the full-precision `vector` column. This is exactly why the column stays `vector` and only the index is `halfvec` — see `docs/02` §5.4. |
 | A query drops the `(embedding::halfvec(2048))` cast | The index is silently ignored and the feed crawls | Written into `docs/02` §5.4 as a hard rule. Add a test that asserts the index is used (`explain (analyze)`). |
 | OpenRouter free tier 429s | Ingestion + rationale slow | Already documented retryable in `docs/04` §5.9; rationale is non-fatal by design |
@@ -577,16 +824,34 @@ are recommendations, not irreversible choices.
 | **D7** | Keep or delete `tailwind.config.ts`? | **Delete it. Tailwind 4 ignores it** — it was doing nothing. Configuration now lives in CSS. | `docs/02` §4.1 (new) |
 | **D8** | Which secret-scanner mechanism? | **Standalone binary + `simple-git-hooks`.** Keeps the repo free of a script file §4 does not sanction, and delivers the local pre-commit hook ENG-001 asks for. | `docs/02` §4.2 |
 | **D9** | Add `eslint-config-next` despite `notes.md` warning about Next 16's `next lint` removal? | **Yes.** We are on Next 15.5.27, where the plugin is purely configuration and survives the Next 16 upgrade. | `docs/06` FND-001 |
-| **D10** | CI integration tests: plain Postgres, or the Supabase image? | **Supabase image — but unproven.** Plain Postgres cannot work: the policies call `auth.uid()` and `auth.jwt()`, which only exist in a Supabase stack. The probe cannot run until §1.7 is fixed, so this stays marked unverified rather than settled. | pending |
+| **D10** | CI integration tests: plain Postgres, or the Supabase image? | **Supabase image — and now testable.** Plain Postgres cannot work: the policies call `auth.uid()` and `auth.jwt()`, which only exist in a Supabase stack. The probe was blocked by §1.7; that is resolved, so this can be settled properly in Step 2 instead of remaining an untested recommendation. `postgres:17-alpine` is confirmed pullable and version-matched. | **still pending** — settle it during Step 2 and record the result here |
 | **D11** | `docs/02` §4 listed `vitest.config.ts`, but the file is `.mts` | **Document `.mts`,** and remove two duplicated lines from the tree. Also added `docs/07` to the tree and corrected "six documents" to "seven". | `docs/02` §4 |
 | **D12** | How do we get a secret scanner that actually runs? | **Resolved — option B.** Standalone gitleaks 8.30.1 in gitignored `tools/`, wired through `simple-git-hooks`, scanning `--staged`. Plus `.gitleaks.toml` for the Supabase/OpenRouter/Stripe formats the built-in ruleset misses. CI scanning still lands with FND-005. | `docs/02` §4.2 |
+| **D13** | D7 says delete `tailwind.config.ts`, but it is still tracked. And `tokens.css` holds both the token definitions *and* base element styles. Which is it? | **Unresolved — needs a decision.** Recommend: delete `tailwind.config.ts` (Tailwind 4 genuinely ignores it, so keeping it is misleading), and split `tokens.css` into *tokens only* plus a new `src/app/globals.css` for `@import "tailwindcss"` and base styles. That matches what Step 0.5a/0.5b already assume. **Do not implement 0.5a/0.5b before this is settled** — the two steps will otherwise disagree about which file owns the Tailwind import. | **pending** — decide first, then implement |
+| **D14** | Phase 1 work (the queue planner, 42 tests) landed in the tree before Phase 0 closed. Is that acceptable? | **Accept it, retroactively.** The module is pure, injects its clock, needs no `task_queue` table, and is gated on nothing FND-002 provides — so it did not jump a real dependency. The cost was doc drift, which §1 and §1.9 now correct. Going forward, no new Phase 1 ticket until the P0→P1 gate passes. | this section |
 
 ## 7. Remaining blockers
 
-Three things stand between here and Phase 1. None of them is a code problem.
+**One hard blocker, and it is not code.** Re-verified 2026-10-03.
 
-1. **WSL2 (§1.7).** Run `wsl --install` as Administrator, then restart. Until then no database
-   work, no Testcontainers, no `supabase db reset`, and no way to prove D10.
-2. **No git remote (§1.1).** Nothing has ever been pushed, so no CI run, preview, or deploy can
-   be tested.
-3. **OpenRouter key.** It was pasted into a chat and must be rotated.
+1. **No git remote (§1.1).** Nothing has ever been pushed, so no CI run, preview, or deploy can
+   be tested. This blocks **FND-005 only** — Steps 0.5, 0.75, 1, 2 and 3 are all unblocked.
+   Fix: `git remote add origin <url>` and push.
+
+**Closed since the first session:**
+
+- ~~WSL2 not installed~~ → installed; `docker-desktop` registered as Version 2.
+- ~~Docker cannot start~~ → engine 29.8.1 verified, containers run, images pull.
+
+**One decision that needs a human, because it requires a write to the live database:**
+
+2. **May I `create extension pg_cron` on the remote `diuwzagrpqhlutbqdvrs`?** It is *available*
+   (1.6.4) but not installed, and availability is not permission. FND-002 needs it for
+   `/api/cron/*` scheduling. The first session installed `vector` on the remote without asking and
+   disclosed it (§1.6) — that is not to be repeated. Ask first, or skip it and use the
+   Vercel Cron → Route Handler fallback in `docs/02` §2.
+
+**Still outstanding, low urgency:**
+
+3. **Rotate the OpenRouter API key** that was pasted into a chat. Nothing in CI depends on it.
+4. **`eslint.config.d.mts`** is an untracked build artifact — gitignore or clean up (§1.9.6).

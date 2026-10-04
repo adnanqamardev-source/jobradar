@@ -231,6 +231,7 @@ jobradar/
 │   │   │   ├── gates.ts             #   hard filters → score 0 + reason
 │   │   │   └── index.ts             #   compose final score, write job_scores
 │   │   ├── queue/
+│   │   │   ├── plan.ts  constants.ts # ★ §6.4 PROTOCOL: the seam both executors cross
 │   │   │   ├── enqueue.ts  claim.ts  run.ts  retry.ts
 │   │   │   └── handlers/            #   ingest_source.ts, score_jobs.ts, send_digest.ts
 │   │   ├── email/
@@ -281,7 +282,7 @@ jobradar/
 |---|---|
 | `app/**/page.tsx` files contain **no business logic** — they call `lib/` and render. | Keeps routes swappable and testable. |
 | A connector knows **only** how to fetch. Normalisation and dedup live in `lib/ingest/`. | New source = 1 file, no duplicated logic. |
-| `lib/db/admin.ts` may only be imported from `lib/queue/**`, `api/cron/**`, `api/webhooks/**`. Enforced by an ESLint `no-restricted-imports` rule. | Prevents the service-role key leaking into client paths. |
+| `lib/db/admin.ts` may only be imported from `lib/queue/**`, `api/cron/**`, `api/webhooks/**` (plus `scripts/**` and `tests/**` — neither is client-reachable, and the integration suite must be able to drive the handlers it tests). Enforced by an ESLint `no-restricted-imports` rule. | Prevents the service-role key leaking into client paths. |
 | Every user-facing mutation is a Server Action in `api/actions/`, never a raw PostgREST call from a component. | Auth, Zod validation, rate limit, and audit log in one place. |
 | Design tokens only in `styles/tokens.css`; no hex values in components. | [04 Frontend Spec](./04-frontend-specification.md) stays enforceable. |
 | One Zod schema per entity in `types/`, reused for API input, DB mapping, and forms. | Three definitions drift; one cannot. |
@@ -911,6 +912,34 @@ LLM rationale 2–3 sentences →  job_scores.explanation
 - Idempotency: every handler is safe to re-run (upserts keyed by unique constraints, digests keyed by `digests.scheduled_for`).
 - Vercel function timeouts are respected by **batch size, not long-running loops** — if a batch is incomplete, the handler re-enqueues itself.
 
+**Where these rules are implemented.** The protocol above lives in `src/lib/queue/plan.ts`
+(`planClaim`, `settleTask`, `backoffFor`, `needsAuditLog`) with its constants in
+`src/lib/queue/constants.ts`. Both `scripts/queue-drain.ts` and `src/app/api/cron/process/route.ts`
+are **executors** of that plan — neither decides anything. `plan.ts` is pure: it takes tasks
+and an injected clock, so the whole protocol is unit-testable without Postgres, and the
+"run twice, assert one row" obligation above can be tested directly.
+
+Two consequences worth stating, because both were bugs once:
+
+- `attempts` increments on **failure**, never on claim. Incrementing at claim burns a retry
+  on every success.
+- The 5-minute lease is written to `locked_at`/`locked_by` **only**. `run_after` carries
+  backoff scheduling alone — since the claim orders by `run_after`, storing a lease there
+  would make one column carry two clocks. `n` in `2^n` is the **post-increment** value, so
+  the first failure waits `2^1 = 2s`.
+
+**Known gap — `claim-primitive` (FND-002).** `FOR UPDATE SKIP LOCKED` cannot be expressed
+through `supabase-js`; it requires an RPC function created in a migration. Until FND-002
+writes it, the executors claim via compare-and-swap (`.eq("status","pending")` on the
+update). That preserves mutual exclusion per task but **not** batch-claim atomicity. The
+`planClaim` half — ordering, eligibility, cap, lease arithmetic — is already correct and is
+where the test coverage lives.
+
+**Handler dispatch is BE-108.** Until `src/lib/queue/handlers/*` exists, a claimed task has
+nothing to run. `queue-drain.ts` releases it back to `pending` with an explanatory
+`last_error` rather than marking it `done`, so a drained row stays visible and retryable
+instead of being falsely complete.
+
 ### 6.5 Digest
 
 Daily `pg_cron` → `send_digest` tasks partitioned by `time_zone` → handler selects `job_scores` for that user where `final_score >= alert_threshold`, `job_id` not dismissed/applied, `scored_at > last_digest_at`, ordered by score, limit 10 → renders React Email → Resend → writes `digests` row. **Zero results → `status = 'skipped'`, no email.**
@@ -943,18 +972,26 @@ Daily `pg_cron` → `send_digest` tasks partitioned by `time_zone` → handler s
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | client | checkout | |
 | `STRIPE_PRICE_ID_PRO` | server | Pro price | |
 | `POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_KEY` | server/client | analytics | |
-| `POSTHOG_HOST` | client | default EU or US host | |
+| `POSTHOG_HOST` | client | default EU or US host | defaults to `https://us.i.posthog.com` |
 | `SENTRY_DSN` | server + client | errors | |
 | `NEXT_PUBLIC_SENTRY_DSN` | client | errors | |
 | `SLACK_WEBHOOK_URL` | server | optional Slack digest (F5) | may be blank |
 | `ADMIN_EMAILS` | server | bootstrap admin allowlist | comma-separated |
-| `RATE_LIMIT_*` | server | per-action ceilings | |
+| `RATE_LIMIT_APPLY_PER_MINUTE` | server | apply rate ceiling | defaults to `10` |
+| `RATE_LIMIT_SAVE_PER_MINUTE` | server | save rate ceiling | defaults to `30` |
+| `RATE_LIMIT_DISMISS_PER_MINUTE` | server | dismiss rate ceiling | defaults to `30` |
+| `RATE_LIMIT_SEARCH_PER_MINUTE` | server | search rate ceiling | defaults to `60` |
+| `CRON_SECRET` | server | bearer token for `/api/cron/*` | **minimum 32 characters**, verified constant-time |
 
 ### 7.2 Configuration rules
 
 1. **Never hardcode** any value from §7.1, plus: API base URLs, plan limits, scoring weights, feature flags.
 2. `.env.example` is committed with empty values and a one-line comment per variable. Real `.env.local` is gitignored; production vars live in Vercel + Supabase dashboards only.
 3. **Validation at boot:** a Zod `envSchema` in `src/lib/env.ts` throws on missing vars so misconfiguration fails at deploy, not at first user request.
+   The schema is reached through `parseEnv(record)`, which is pure and returns a result rather than throwing; the
+   exported `env` object is the thin binding that calls it with `process.env` and throws. Tests and tooling use
+   `parseEnv` directly, so neither has to mutate `process.env` or reload a module.
+   Rule 1 above applies to scripts too: `scripts/queue-drain.ts` imports `env` and never reads `process.env` itself.
 4. **Secrets hygiene:** no secrets in logs, `audit_logs.meta`, Sentry breadcrumbs, or `jobs.raw`. A `redact()` helper strips `*_KEY`, `*_SECRET`, `authorization`, `cookie` before any serialisation.
 5. **Plan limits and scoring weights** live in code (`lib/billing/plans.ts`, `lib/scoring/weights.ts`) behind feature flags — not in env vars — so they're reviewed and versioned.
 6. **Rotation:** rotate `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `FIRECRAWL_API_KEY`, `STRIPE_WEBHOOK_SECRET` on any suspected exposure; document rotation date in `docs/`.
@@ -963,6 +1000,9 @@ Daily `pg_cron` → `send_digest` tasks partitioned by `time_zone` → handler s
    cover it. Every optional var uses the `blank()` helper in `src/lib/env.ts`, which maps `""`
    to `undefined` before validating. Without this, any unset optional var fails boot validation
    and the whole app refuses to start.
+   The same applies to a var that has a **default**: `VAR=` must fall back to the default, not fail
+   boot. Every defaulted optional in `env.ts` is therefore wrapped as `blank(schema).default(...)`.
+   Any new var that is optional or defaulted must follow one of those two shapes.
 7. **Per-request scoping:** Server Actions and Route Handlers take the user-scoped client (user JWT → RLS enforced). Service-role client is created lazily and only inside queue handlers.
 
 ### 7.3 Local development

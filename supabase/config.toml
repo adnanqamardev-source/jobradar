@@ -11,6 +11,7 @@ max_rows = 1000
 [db]
 port = 54322
 major_version = 17
+image = "pgvector/pgvector:pg17"
 # migrations live in ./migrations, applied by `supabase db reset`
 
 [db.pooler]

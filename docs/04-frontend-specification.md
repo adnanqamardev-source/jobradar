@@ -18,13 +18,13 @@ All values are defined once as CSS custom properties in `src/styles/tokens.css` 
 |---|---|---|
 | `--color-ink` | `#14161A` | Primary text, headings, icons |
 | `--color-ink-2` | `#4A5160` | Secondary text, descriptions |
-| `--color-ink-3` | `#8A91A0` | Muted text, placeholders, timestamps |
+| `--color-ink-3` | `#5A6270` | Muted text, placeholders, timestamps |
 | `--color-paper` | `#F6F4EF` | Page background (warm off-white) |
 | `--color-surface` | `#FFFFFF` | Cards, panels, modals |
 | `--color-surface-2` | `#EFEDE7` | Subtle fill, table stripes, hover |
 | `--color-surface-3` | `#E7E4DC` | Pressed / active fill |
-| `--color-line` | `#E2DFD8` | Default borders, dividers |
-| `--color-line-strong` | `#CFCCC3` | Input borders, table rules |
+| `--color-line` | `#9A9282` | Default borders, dividers (AA 3:1 on surface) |
+| `--color-line-strong` | `#908E7E` | Input borders, table rules (AA 3:1 on surface) |
 
 ### 1.2 Brand & semantic
 
@@ -36,13 +36,18 @@ All values are defined once as CSS custom properties in `src/styles/tokens.css` 
 | `--color-brand-ink` | `#1B2AB8` | Text on `brand-soft` |
 | `--color-signal` | `#C6F24E` | **Strong match only** (score ≥ 85) |
 | `--color-signal-ink` | `#3B4A0B` | Text/icons on `signal` |
-| `--color-success` | `#1F9D63` | Positive states, "sent", "applied" |
-| `--color-success-soft` | `#E3F5EC` | Success backgrounds |
-| `--color-warning` | `#F5A524` | Caution, stale data, approaching limit |
-| `--color-warning-soft` | `#FDF1DC` | Warning backgrounds |
-| `--color-danger` | `#E5484D` | Errors, destructive actions, failed runs |
-| `--color-danger-soft` | `#FDEBEC` | Error backgrounds |
-| `--color-info` | `#3AA0C9` | Neutral notices, "new" indicators |
+| `--color-success` | `#167A4A` | Positive states, "sent", "applied" |
+| `--color-success-soft` | `#D1E8DD` | Success backgrounds |
+| `--color-success-ink` | `#0D5A33` | Text on `success-soft` |
+| `--color-warning` | `#C47800` | Caution, stale data, approaching limit |
+| `--color-warning-soft` | `#F5E1B8` | Warning backgrounds |
+| `--color-warning-ink` | `#7A4A00` | Text on `warning-soft` |
+| `--color-danger` | `#C0393C` | Errors, destructive actions, failed runs |
+| `--color-danger-soft` | `#EBCDCD` | Error backgrounds |
+| `--color-danger-ink` | `#7A2023` | Text on `danger-soft` |
+| `--color-info` | `#26749A` | Neutral notices, "new" indicators |
+| `--color-info-soft` | `#D0E8F5` | Info backgrounds |
+| `--color-info-ink` | `#1A5A7A` | Text on `info-soft` |
 
 ### 1.3 Match-score scale (used by `ScoreMeter` and feed cards)
 
@@ -52,13 +57,13 @@ All values are defined once as CSS custom properties in `src/styles/tokens.css` 
 | Good | 70–84 | `#9EDB3F` | `#14161A` | Good match |
 | Fair | 55–69 | `#F5A524` | `#14161A` | Fair match |
 | Weak | 1–54 | `#CFCCC3` | `#4A5160` | Weak match |
-| Gated | 0 | `#E2DFD8` | `#8A91A0` | Filtered out |
+| Gated | 0 | `#E2DFD8` | `#5A6270` | Filtered out |
 
 > **Rule:** score is *never* communicated by colour alone — every meter carries a numeric value (`78`) and a text label. Required by [03 §6.1 X-23](./03-security-and-access.md).
 
 ### 1.4 Contrast requirements
 
-Body text on `paper` or `surface` must reach **AA 4.5:1**; large display text and icons **AA 3:1**. `ink-3` is permitted only for non-essential metadata at ≥13px. `signal` is never used as a text colour on light backgrounds — only as a fill with `ink` on top. Verified with an automated contrast check in CI (`vitest-axe` on the component gallery).
+Body text on `paper` or `surface` must reach **AA 4.5:1**; large display text and icons **AA 3:1**. `ink-3` is permitted only for non-essential metadata at **≥12px** (matching the `xs` token). `signal` is never used as a text colour on light backgrounds — only as a fill with `ink` on top. Input borders and card dividers must reach **AA 3:1** (WCAG 1.4.11). Verified with an automated contrast check in CI (`vitest-axe` on the component gallery).
 
 ---
 
@@ -130,7 +135,7 @@ Built on Radix primitives, styled with tokens. Every component has: default, hov
 | Font | `body` (15/1.55) |
 | Placeholder | `--color-ink-3` |
 | Focus | border → `--color-brand` + `box-shadow: 0 0 0 3px var(--color-brand-soft)` |
-| Error | border → `--color-danger`, `box-shadow: 0 0 0 3px var(--color-danger-soft)`, helper text in `danger` at `sm`, **always with an icon + text** (not colour alone) |
+| Error | border → `--color-danger`, `box-shadow: 0 0 0 3px var(--color-danger-soft)`, helper text in `danger-ink` at `sm`, **always with an icon + text** (not colour alone) |
 | Disabled | `--color-surface-2` fill, `ink-3` text |
 
 **Field anatomy:** label (above, `xs`/500, `ink-2`) → control → helper or error (below, `sm`). Never a floating placeholder. Required fields get a `*` *and* `aria-required`.
@@ -144,9 +149,9 @@ Built on Radix primitives, styled with tokens. Every component has: default, hov
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│ [Acme Corp]  ● Strong match  ·  seen on 2 sources   ⋯ │  ← company chip, score badge, overflow menu
+│ [Acme Corp]  ● Strong match     seen on 2 sources   ⋯ │  ← company chip, score badge, overflow menu
 │ Senior Frontend Engineer                               │  ← h3, 20/600
-│ Remote (US) · Full-time · $160k–$190k · 2d ago        │  ← xs, ink-3, mono for salary
+│ Remote (US)  |  Full-time  |  $160k–$190k  |  2d ago  │  ← xs, ink-3, mono for salary, separated by |
 │ React · TypeScript · Next.js  +4                      │  ← skill chips (secondary)
 │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░  78 Good match                 │  ← ScoreMeter
 │ [ Save ]  [ Dismiss ]  [ Mark applied ]                │  ← action row (secondary/ghost)
@@ -164,7 +169,7 @@ Built on Radix primitives, styled with tokens. Every component has: default, hov
 | Saved | left edge `3px --color-brand` accent |
 
 **Generic card:** `surface`, `1px line`, radius `12px`, padding `20px`, `shadow-sm` only when elevated.
-**Stat card:** `label` eyebrow (uppercase mono) → `score-lg` number → `xs` delta (`+3 this week`).
+**Stat card:** `score-lg` number → `xs` delta (`+3 this week`). (Eyebrow labels use semantic `<h4>`/`<caption>`, not the `.label` utility.)
 
 ### 3.4 ScoreMeter
 
@@ -191,7 +196,7 @@ Semantic        ▓▓▓▓▓▓▓▓░░  80.2 / 100   ← blend at 50%
 | Backdrop | `rgba(20,22,26,.45)`, `backdrop-filter: blur(2px)`, fade 150ms |
 | Panel | `surface`, radius `16px`, `shadow-md`, max-width `480px` (wide: `640px`), padding `24px` |
 | Entrance | `opacity 0→1` + `translateY(8px)→0`, 180ms ease-out |
-| Title | `h2` + optional `label` eyebrow; close × top-right, 36px, `aria-label="Close"` |
+| Title | `h2`; close × top-right, 36px, `aria-label="Close"` |
 | Footer | right-aligned, `ghost` then `primary`, gap `8px`, sticky on mobile |
 | Focus | trapped; `Escape` closes; focus returns to trigger |
 | Mobile | bottom sheet: full width, radius `16px 16px 0 0`, safe-area padding |
@@ -203,7 +208,7 @@ Used for: confirm stage move, apply modal, delete account, source pause. **Never
 | Type | Height / radius | Style | Use |
 |---|---|---|---|
 | Score badge | 24px / `6px` | band fill + `ink` text, mono | card corner |
-| Status badge | 24px / `999px` | soft bg + matching ink text | `Applied`, `Interview`, `Stale`, `Sent` |
+| Status badge | 24px / `999px` | soft bg + dedicated ink token (`success-ink`, `warning-ink`, `danger-ink`, `info-ink`) | `Applied`, `Interview`, `Stale`, `Sent` |
 | Source badge | 22px / `6px` | `surface-2` + `ink-2`, **`label` mono uppercase** | `GREENHOUSE`, `FIRECRAWL` |
 | Skill chip | 28px / `999px` | `surface-2` + `ink-2`, `sm` | filters, job skills |
 | Chip (selected) | 28px / `999px` | `brand-soft` + `brand-ink`, × button | active filters |
