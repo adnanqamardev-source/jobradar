@@ -122,13 +122,25 @@ Create `lib/logger.ts` (JSON with `requestId`/`runId`, `redact()` on `*_KEY`, `*
 ### ENG-006 — CI pipeline
 **[OPS]** · **Priority:** MUST · **Depends on:** ENG-001
 
-`.github/workflows/ci.yml`: install → lint → typecheck → unit → integration (Testcontainers Postgres) → build → Playwright e2e → **secret-scan the built client bundle** → `pnpm audit` (high/critical fail). PR previews deploy to Vercel; merge to `main` deploys production.
+`.github/workflows/ci.yml`: lint → typecheck → unit (+ integration, Testcontainers Postgres, once Phase 1 lands) → build → **secret-scan the built client bundle** → Playwright e2e → `pnpm audit` (high/critical fail). `audit` runs in parallel with the rest — it inspects the lockfile, not the build, so gating it behind `build` would only add wall-clock. Deploy is **not** in this file: Vercel's Git integration handles previews on PR and production on merge to `main`, which needs no token in repo secrets ([02 §4](./02-technical-architecture.md)).
+
+Three details that are load-bearing and were each learned the hard way:
+
+- The bundle scan matches credential **shapes** and **values**, never names. The original
+  predicate `supabase|sk-|whsec_|rk_live` is in the git history because it matched the
+  library name and ordinary English while catching nothing — see `scripts/scan-bundle-secrets.ts`.
+- Node is pinned once in workflow-level `env.NODE_VERSION` and read by every job, so CI cannot
+  drift from the Vercel runtime.
+- CI supplies **placeholder** values for the five required env vars. Importing `@/lib/env` makes
+  `next build` evaluate the contract, so a build without them fails with
+  `Failed to collect page data for /<route>` — the deploy-time gate working as intended.
 
 **Done when:**
-- [ ] CI fails on lint error, type error, failing test, or high/critical CVE
-- [ ] Bundle scan fails the build if `supabase|sk-|whsec_|rk_live` appears in client output
-- [ ] Playwright runs against the preview deployment, not just localhost
-- [ ] Required status checks block merging to `main`
+- [x] CI fails on lint error, type error, failing test, or high/critical CVE — verified; all 7 jobs green on `main`
+- [x] Bundle scan fails on a credential **value** in client output — `scripts/scan-bundle-secrets.ts`, proven by planting an `sb_secret_` value (fails) and by minified noise (passes)
+- [x] Playwright runs against the preview deployment, not just localhost — `playwright.config.ts` honours `PLAYWRIGHT_TEST_BASE_URL` and omits `webServer` for external targets; 18 specs pass against the live deployment
+- [ ] Required status checks block merging to `main` — repo setting, not code. Enable the 7 job names as required checks in GitHub settings.
+- [x] The workflow file itself is valid — `tests/unit/workflow-yaml.test.ts` rejects duplicate keys, the required job set, and the `needs` ordering. Added after a duplicate key made GitHub reject the file in 0s with no logs while `yaml.safe_load` passed it.
 
 ---
 

@@ -120,24 +120,6 @@ jobs:
       - name: Scan for secrets in client bundle
         run: pnpm secret:scan:bundle
 
-  secret-scan:
-    name: Secret Scan Client Bundle
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 12
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - name: Scan for secrets in client bundle
-        run: pnpm secret:scan:bundle
-
   e2e:
     name: Playwright E2E
     runs-on: ubuntu-latest
