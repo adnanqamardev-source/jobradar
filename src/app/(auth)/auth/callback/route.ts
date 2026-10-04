@@ -23,18 +23,23 @@
  * Still a 500 — but one that names every variable to set, which is the difference between a
  * five-minute fix and an afternoon.
  *
- * ## What this does NOT do — measured, not assumed
+ * ## This does gate the build — verified, and load-bearing
  *
- * docs/02 §7.2 rule 3 wants misconfiguration to "fail at deploy, not at first user request."
- * This does not achieve that. `pnpm build` **succeeds** with all five required vars absent:
- * Next.js does not evaluate dynamic route modules during build, so the module-level throw
- * never fires until the first request reaches it on the server.
+ * docs/02 §7.2 rule 3 requires that misconfiguration "fail at deploy, not at first user
+ * request." Importing the contract is what delivers that. `next build` runs a
+ * "collecting page data" pass that evaluates route modules, so the module-level throw fires
+ * during the build. With no `.env.local`:
  *
- * Getting the build itself to gate on env would mean validating in a place the build *does*
- * execute. The candidate is `src/instrumentation.ts` `register()`, which runs on server
- * start — that would make a bad deploy refuse to serve rather than serve 500s. Not done here
- * because it fails every route on any partial `.env.local`, which is a larger behavioural
- * change than this route warrants on its own. Recorded as a follow-up, not quietly claimed.
+ *     Error: Invalid environment variables:
+ *     NEXT_PUBLIC_SUPABASE_URL: Required
+ *     ...
+ *     [Error: Failed to collect page data for /auth/callback]
+ *
+ * A misconfigured deployment therefore never ships. That is why CI supplies *placeholder*
+ * values for these five vars rather than real ones (see `.github/workflows/ci.yml`): the
+ * schema validates shape and presence, not whether a key actually works, and AGENTS.md
+ * forbids live API calls in CI. It also means any future route that imports `@/lib/env`
+ * inherits the same build gate for free.
  *
  * Note this validates the *whole* contract, not just the two keys used below — deliberate.
  * Every route shares one process, so a partially-configured deployment breaks somewhere later

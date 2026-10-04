@@ -17,6 +17,29 @@ concurrency:
 env:
   NODE_VERSION: "24"
 
+  # Placeholder values for the five vars `src/lib/env/schema.ts` marks required.
+  #
+  # These exist because importing `@/lib/env` makes the module-level validation throw, and
+  # `next build` evaluates route modules during its "collecting page data" pass. So a build
+  # with none of these set fails with `Failed to collect page data for /auth/callback` —
+  # which is the *correct* behaviour for a misconfigured deployment, and exactly what
+  # docs/02 §7.2 rule 3 asks for ("fails at deploy, not at first user request"). CI just
+  # needs to satisfy the schema to get a build at all.
+  #
+  # They are deliberately fake. The schema checks shape and presence, not whether a
+  # credential works, and AGENTS.md forbids live API calls in CI — so a placeholder that
+  # satisfies `z.string().url()` / `z.string().min(1)` / `z.string().min(32)` is enough, and
+  # no real secret ever enters a CI log. `CRON_SECRET` must be >= 32 chars per docs/02 §7.1.
+  #
+  # Values must NOT match a credential *shape*: `scripts/scan-bundle-secrets.ts` runs in this
+  # same workflow and would flag a planted `sb_secret_...` or `sk-or-v1-...` as a leak. These
+  # are deliberately shaped so no pattern in that scanner matches.
+  NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
+  SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+  CRON_SECRET: ci-placeholder-cron-secret-not-a-real-secret
+  OPENROUTER_API_KEY: ci-placeholder-openrouter-key
+
 jobs:
   lint:
     name: Lint
@@ -78,6 +101,24 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+
+  secret-scan:
+    name: Secret Scan Client Bundle
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Scan for secrets in client bundle
+        run: pnpm secret:scan:bundle
 
   secret-scan:
     name: Secret Scan Client Bundle

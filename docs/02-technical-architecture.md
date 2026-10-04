@@ -1018,7 +1018,11 @@ Daily `pg_cron` → `send_digest` tasks partitioned by `time_zone` → handler s
 
 1. **Never hardcode** any value from §7.1, plus: API base URLs, plan limits, scoring weights, feature flags.
 2. `.env.example` is committed with empty values and a one-line comment per variable. Real `.env.local` is gitignored; production vars live in Vercel + Supabase dashboards only.
-3. **Validation at boot:** a Zod `envSchema` in `src/lib/env.ts` throws on missing vars so misconfiguration fails at deploy, not at first user request.
+3. **Validation at boot:** a Zod `envSchema` in `src/lib/env/schema.ts` throws on missing vars so misconfiguration fails at deploy, not at first user request.
+   Verified: `next build` evaluates route modules during its "collecting page data" pass, so a
+   route importing `@/lib/env` fails the **build** with `Failed to collect page data for /<route>`
+   when a required var is absent. Two earlier claims that it did *not* were wrong — the test
+   behind them left `.env.local` in place, and Next auto-loads it (see rule 8 and `notes.md`).
    The schema is reached through `parseEnv(record)`, which is pure and returns a result rather than throwing; the
    exported `env` object is the thin binding that calls it with `process.env` and throws. Tests and tooling use
    `parseEnv` directly, so neither has to mutate `process.env` or reload a module.
@@ -1035,6 +1039,25 @@ Daily `pg_cron` → `send_digest` tasks partitioned by `time_zone` → handler s
    boot. Every defaulted optional in `env.ts` is therefore wrapped as `blank(schema).default(...)`.
    Any new var that is optional or defaulted must follow one of those two shapes.
 7. **Per-request scoping:** Server Actions and Route Handlers take the user-scoped client (user JWT → RLS enforced). Service-role client is created lazily and only inside queue handlers.
+8. **CI needs placeholders, not secrets.** Rule 3 means any module importing `@/lib/env` makes
+   `next build` require a schema-valid environment: the build's "collecting page data" pass
+   evaluates route modules, so a missing var fails the build with
+   `Failed to collect page data for /<route>`. That is the intended deploy-time gate working.
+
+   `.github/workflows/ci.yml` therefore supplies **placeholder** values in workflow-level `env`
+   for the five required vars. Constraints on those placeholders:
+
+   - **Fake, always.** The schema checks shape and presence, not whether a credential works.
+     AGENTS.md forbids live API calls in CI, so no real secret may enter a CI log.
+   - **No credential shape.** `scripts/scan-bundle-secrets.ts` runs in the same workflow
+     against the same build. A placeholder shaped like `sb_secret_…` or `sk-or-v1-…` would fail
+     the gate on CI's own environment.
+   - **Satisfy the constraint.** `CRON_SECRET` must be ≥ 32 characters (§7.1); the URL var must
+     parse as a URL.
+
+   `tests/unit/ci-placeholders.test.ts` asserts all four properties. It duplicates the values
+   from the workflow on purpose: **CI cannot test its own environment**, so a unit test is the
+   only available oracle. A new required var must be added in both places.
 
 ### 7.3 Local development
 
