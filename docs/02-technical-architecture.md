@@ -23,6 +23,7 @@
 
 | Layer | Choice | Version | Why this, and what it replaces |
 |---|---|---|---|
+| **Runtime** | **Node.js** | **24** (pinned in `.nvmrc` + `engines`) | Raised from 20 on 2026-10-04: Vercel has ended support for Node 20, so a build on it fails outright. Pinned in one place and read by CI so the runtime under test is the runtime that deploys — a green run on a different Node proves nothing about the production build. |
 | **Framework** | **Next.js (App Router)** | 15.x (pin latest stable at scaffold) | One codebase for marketing site, app, and API routes. Server Components keep the feed fast; Route Handlers host cron endpoints. Replaces: separate Express/FastAPI backend + React SPA. |
 | **Language** | **TypeScript** | 5.x strict | Zod + Prisma-or-not type safety across queue payloads and connector outputs. `strict: true`, `noUncheckedIndexedAccess: true`. |
 | **UI** | **React** | 19.x | Server Components by default; client components only where there's real interactivity (filters, kanban, wizard). |
@@ -131,9 +132,10 @@ jobradar/
 ├── .prettierrc
 ├── .env.example                     # every var, empty values, documented
 ├── .gitignore
+├── .nvmrc                           # Node 24 — Vercel dropped Node 20; see §2
 ├── playwright.config.ts
 ├── vitest.config.mts                # .mts, not .ts — a .ts config loads as CJS and breaks
-├── pnpm-workspace.yaml              # pnpm 12 settings live here, not in package.json
+├── pnpm-workspace.yaml              # pnpm 12 settings + dependency `overrides`, not in package.json
 ├── .gitleaks.toml                   # secret-scan rules — see §4.2
 ├── .simple-git-hooks.json           # declares the pre-commit hook
 │
@@ -142,7 +144,7 @@ jobradar/
 │
 ├── scripts/
 │   ├── queue-drain.ts               # local queue worker (replaces Vercel cron)
-│   └── scan-bundle-secrets.mjs      #   FND-005 CI gate — credential *values* in build output
+│   └── scan-bundle-secrets.ts       #   FND-005 CI gate — credential *values* in build output
 │
 ├── docs/                            # ← the seven source documents live here
 │   ├── 01-prd.md
@@ -265,7 +267,7 @@ jobradar/
 │
 ├── scripts/
 │   ├── queue-drain.ts               #   local queue drain — replaces Vercel cron (`pnpm queue:drain --once`)
-│   └── scan-bundle-secrets.mjs      #   credential-value scan of `.next/` (FND-005 CI gate)
+│   └── scan-bundle-secrets.ts       #   credential-value scan of `.next/` (FND-005 CI gate)
 │
 ├── tests/
 │   ├── unit/                        #   scoring, dedupe, normalise, salary parse
@@ -1046,7 +1048,7 @@ pnpm queue:drain --once         # process one queue batch locally (no Vercel cro
 
 Standalone scripts under `scripts/` load env through Node's built-in `--env-file=.env.local`
 flag, wired into the npm script. There is **no `dotenv` dependency** — adding one is a
-regression, not a fix. `scripts/scan-bundle-secrets.mjs` is the exception: it reads
+regression, not a fix. `scripts/scan-bundle-secrets.ts` is the exception: it reads
 `process.env` directly and takes no `--env-file`, because it must see the *live* secret values
 to exact-match them. It exits `2` if `.next/` is missing, so run `pnpm build` first:
 

@@ -737,13 +737,13 @@ before starting.
 
 | Item | What it must be | Why the sketch was wrong |
 |---|---|---|
-| Package manager | **pnpm**, with Node ≥ 20 via `engines` | The sketch implies `npm ci` / Node 18 |
+| Package manager | **pnpm**, with Node ≥ 24 via `engines` | The sketch implies `npm ci` / Node 18. Raised from ≥ 20 on 2026-10-04: Vercel has ended support for Node 20, so builds on it fail outright |
 | Job order | **typecheck → lint → test** | `AGENTS.md` mandates this order; the sketch had lint before typecheck |
 | Postgres | **Supabase image**, not `services: postgres` (D10) | Plain Postgres has no `auth.uid()` / `auth.jwt()`, so every RLS test fails. **Unproven until §1.7 is fixed.** |
 | `testcontainers` | Must already exist | Added in Step 2. Writing this job first means it fails on a missing binary |
 | `supabase db diff` | **Must be absent** | There are 0 migrations, so "up to date" proves nothing was applied (AGENTS.md Rule 0) |
 | `pnpm audit` | Run it **before** wiring | 42 pinned dependencies plus Next 15.5.27 could fail on day one. Unverified so far |
-| e2e | `PLAYWRIGHT_TEST_BASE_URL` + conditional `webServer` | `playwright.config.ts` hardcodes `localhost:3000` and always boots `pnpm dev`. A preview-URL job would test localhost while its name claimed otherwise — a green result proving nothing |
+| e2e | `PLAYWRIGHT_TEST_BASE_URL` + conditional `webServer` | `playwright.config.ts` hardcoded `localhost:3000` and always booted `pnpm dev`. A preview-URL job would test localhost while its name claimed otherwise — a green result proving nothing. **Done 2026-10-04**, with a second bug found on the first CI run: GitHub expands an unset repo variable to `""`, not `undefined`, so a `??` chain resolved `baseURL` to `""` and all 18 tests died on `Cannot navigate to invalid URL`. Blank must be treated as absent |
 
 Deployment runs via Vercel's Git integration (zero YAML), plus a `main`-gated `supabase db push`. Sanctioned by `docs/02` §4. **Done 2026-10-04** — the `deploy.yml` that was written instead (using `amondnet/vercel-action` with `VERCEL_TOKEN` / `VERCEL_ORG_ID` / `VERCEL_PROJECT_ID`) has been removed; see `docs/02` §4 "Deployment". Project `jobradar` created; connecting the GitHub repo is a one-time dashboard step.
 

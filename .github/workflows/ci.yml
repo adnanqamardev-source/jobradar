@@ -10,6 +10,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Node 24 across every job. Node 20 reached end-of-life and Vercel has ended support for it,
+# so a build on 20 fails there outright. The version is pinned here *and* in `.nvmrc` so the
+# runtime CI tests is the runtime that deploys — a green run on 20 would not prove the
+# production build works.
+env:
+  NODE_VERSION: "24"
+
 jobs:
   lint:
     name: Lint
@@ -21,7 +28,7 @@ jobs:
           version: 12
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
@@ -36,7 +43,7 @@ jobs:
           version: 12
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
@@ -51,7 +58,7 @@ jobs:
           version: 12
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
@@ -67,7 +74,7 @@ jobs:
           version: 12
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
@@ -83,7 +90,7 @@ jobs:
           version: 12
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
@@ -101,7 +108,7 @@ jobs:
           version: 12
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps
@@ -123,7 +130,7 @@ jobs:
           version: 12
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # `--audit-level`, not `--level`. pnpm rejects `--level` outright with exit code 2,
