@@ -4,6 +4,10 @@ Append one line when something wastes time. Delete entries that stop being true.
 
 **Format:** `<!-- date --> | what happened | what to do instead`
 
+## Failed methods
+
+Approaches that didn't work — read before trying something similar.
+
 | Date | What happened | Do this instead |
 |---|---|---|
 | 2026-10-03 | Split `env.ts` into `parseEnv()` + a thin binding and assumed the module-load throw was gone. `tests/unit/env.test.ts` still failed to collect: importing the file **evaluates** `export const env = bindProcessEnv()`, which reads `process.env` and throws. Splitting the *function* does not remove the *module* side effect. | When a module's side effect is at import time, the seam must be a **separate module** (`env/schema.ts` pure, `env/index.ts` binds). Test the pure file. Verify by running the suite — a "pure function" inside an impure module is still an impure import. |
@@ -19,7 +23,13 @@ Append one line when something wastes time. Delete entries that stop being true.
 | 2026-10-03 | `@eslint/js` and `typescript-eslint` were imported by `eslint.config.mjs` but absent from `package.json`, so `pnpm lint` failed with "Cannot find package". Also `next lint` was still the script despite `next lint` being removed in Next 16. | When a flat config imports a package, verify it is in `devDependencies` before running the linter. A missing transitive is a config bug, not a lint failure. |
 | 2026-10-03 | `pnpm lint` reported a **fake failure** — PowerShell surfaced ESLint's stderr echo as `NativeCommandError` with a `ParserError`-looking wrapper, on a run that actually exited 0 with no findings. Nearly logged as a lint regression. | Judge ESLint by its exit code, not its wrapper's error record: `node node_modules/eslint/bin/eslint.js . ; $LASTEXITCODE`. On this machine PowerShell is 5.1 and turns *any* stderr write into an error record — `pnpm build` does the same thing to its ⚠ warnings. |
 | 2026-10-03 | Used the `glob` tool to inventory the repo and concluded `.github/`, `src/lib/errors/` and `src/app/` did not exist. All three existed. `glob` silently returned a partial listing, and I nearly reported three files as missing. | Never inventory this repo with `glob`. Use `git ls-files` for tracked and `Get-ChildItem -Recurse` for on-disk. AGENTS.md Rule 0 already says this — this is the second time it cost a false claim. |
-| 2026-10-03 | Believed `docs/07`'s "WSL2 is not installed / Docker cannot run — the only hard blocker" and carried it forward as fact. WSL2 had been installed since; the engine simply wasn't running. | A plan document's environment findings decay exactly like its code findings. Re-run the environment probes (`wsl -l -v`, `docker version`, `git remote -v`) before repeating a blocker claim to the user — and distinguish **Client** vs **Server** version: a working client with no server is "not running", not "not installed". |
+
+## Broken loops
+
+Repeating the same mistake, or shipping something broken while claiming it worked.
+
+| Date | What happened | Do this instead |
+|---|---|---|
 | 2026-10-04 | Marked **FND-005 "Completed"** in `docs/06` after running the *local* gates, and pushed. Three of its seven CI jobs failed on that first push: `pnpm audit --level=high` (not a pnpm flag — exits 2 on the typo, reads as a CVE), `secret-scan` (matched the literal word `supabase`, so it failed every build), and `e2e` (`tests/e2e/` held only `.gitkeep` → `No tests found`). | **A ticket whose deliverable is a workflow is not done until that workflow has run green.** Local `typecheck/lint/test` says nothing about a YAML file. Push, read the run, then write the completion claim — never before. Same class as notes.md's "up to date against zero migrations": a gate that was never executed is not a pass. |
 | 2026-10-04 | Wrote a secret scanner as `grep -rE "(supabase\|sk-\|whsec_\|rk_live\|sb_secret_\|sb_publishable_)"`. It matched **names**, not **values**: `supabase` is the library name (in every chunk) and `sk-` matches `skipped`/`task-`/minified identifiers, so it failed on every clean build — while a real leak (`sb_secret_<actual key>`) was no better matched. It was in `docs/03` §4.1 as if correct. | A leak is a credential **value**. Match shapes requiring 20+ chars of key material after the prefix, and additionally exact-match the live `process.env` values — that catches *this* deployment's key whatever its shape. Then prove the gate both ways: plant a fake `sb_secret_<40 chars>` (must fail) and ordinary minified code containing `supabase`/`sk-` (must pass). A gate that cannot fail is as bad as one that always fails. |
 | 2026-10-04 | Wrote the FND-005 bundle scanner to fix a grep that matched *names*. Then immediately **reintroduced the same class of bug one level up**: it also flagged the bare string `SUPABASE_SERVICE_ROLE_KEY` in the *server* bundle. Wiring `auth/callback/route.ts` to import `@/lib/env` made the Zod schema bundle into server output — where the key `SUPABASE_SERVICE_ROLE_KEY:` legitimately exists — so the gate failed on a variable that route never reads. | Three tiers, and the tier is the point: **client** bundle → credential values *and* bare names (a name there means the import boundary is gone). **Server** output → credential *values* only; the server bundle is *supposed* to contain the contract that names every variable. A bare identifier is not a secret. After any change to what gets bundled, re-run the scan — it was green one command earlier and red the next, which is what exposed this. |
@@ -33,9 +43,43 @@ Append one line when something wastes time. Delete entries that stop being true.
 | 2026-10-04 | Ran `pnpm test` first on a brand-new file: **105 passed**. Then ran the documented order and got `typecheck exit=2` and `lint exit=1` on that same file — missing `import { describe, expect, it } from "vitest"` (there are no vitest globals in this repo's tsconfig), `Array<T>` instead of `T[]`, an implicit `any`, and a `String(x)` on an object. Green tests had told me nothing about either gate. | **Run gates in the documented order, `typecheck → lint → test`, and never substitute one for another** — they check disjoint properties, and `vitest` resolves types and ignores ESLint rules that `tsc` and `eslint` enforce. A new test file is the single most likely file in the repo to fail the other two gates, because it uses APIs the compiler does not see as ambient. |
 | 2026-10-04 | Wrote a duplicate-key-rejecting YAML parser to catch a bug that had shipped — and its first run failed on **valid** YAML, because it treated `needs: [lint, typecheck, test]` as the literal string `"[lint, typecheck, test]"`. The ordering assertion then compared a string against an array. A checker that rejects the file it is supposed to protect is no better than one that accepts everything. | A checker must cover the syntax the target file **actually uses** — inspect it before writing the parser, and when an assertion fails, suspect the parser first. Then prove it both ways: feed it the known-bad input (must throw) *and* the real file (must pass). I only had the second until the test failed. |
 
-<!-- Sections: failed methods · broken loops · wrong-file waste · flaky tests -->
+## Wrong-file waste
+
+Editing the wrong file, or trusting a stale path.
+
+| Date | What happened | Do this instead |
+|---|---|---|
+| 2026-10-03 | Believed `docs/07`'s "WSL2 is not installed / Docker cannot run — the only hard blocker" and carried it forward as fact. WSL2 had been installed since; the engine simply wasn't running. | A plan document's environment findings decay exactly like its code findings. Re-run the environment probes (`wsl -l -v`, `docker version`, `git remote -v`) before repeating a blocker claim to the user — and distinguish **Client** vs **Server** version: a working client with no server is "not running", not "not installed". |
+
+## Flaky tests
+
+Non-deterministic test behaviour — intermittent failures, order-dependent results.
+
+| Date | What happened | Do this instead |
+|---|---|---|
+| 2026-10-04 | `playwright.config.ts` baseURL bug (see Broken loops) caused all 18 e2e tests to fail intermittently depending on whether `PLAYWRIGHT_TEST_BASE_URL` was set. The tests themselves were fine; the config made them order-dependent on environment state. | When tests fail only in certain environments, suspect the config before the tests. A test that passes locally but fails in CI is not flaky — it is environment-dependent, and the fix belongs in the config, not the test. |
 
 ## Hard rules (escalated from repeat offences — see AGENTS.md Rule 1)
+
+### Security
+
+- **Never print a credential — not to stdout, not to a transcript, not to "check" it.** A helper
+  script echoed the live service-role key into the conversation this session. The repo stayed
+  gitleaks-clean; the transcript did not. Reference a value by its length and prefix only, and
+  treat any log/CI/chat exposure as a leak: rotate per `docs/03` §4.4 and record the date.
+- **A bare identifier is not a secret.** Match credential *values* everywhere. Match *names*
+  only in the client bundle, where a name is itself the violation. The server bundle is
+  supposed to contain the env contract, which names every variable.
+- **`process.env.X!` anywhere in `src/` is a latent opaque 500.** The `!` asserts a value nothing
+  checked, and the SDK then fails with copy naming none of the five variables. Import `env` from
+  `@/lib/env` so Zod reports every missing variable by name at once.
+- **CRON_SECRET must be ≥ 32 chars** (Zod `min(32)`, verified constant-time). The committed
+  placeholder `your_cron_secret_here` (19 chars) made `import { env }` throw at module load.
+  Generate with `crypto.randomBytes(32)`, never hand-type.
+- **A security gate must be proven in both directions.** Plant a fake secret (must fail) and
+  realistic noise (must pass). Neither direction alone proves the gate works.
+
+### Process
 
 - **Do not start Phase 2 work.** Phase 2 is gated on `supabase db reset` succeeding (P0→P1) and
   BE tests green (P1→P2). With zero migrations and empty `src/types/`, neither gate can pass.
@@ -44,9 +88,6 @@ Append one line when something wastes time. Delete entries that stop being true.
   mock `env`, no example migration. A green check with no output behind it is worthless.
 - **`"latest"` in `package.json` is a bug, not a default.** 42 dependencies were unpinned,
   making CI builds non-reproducible. Pin exact versions; re-pin deliberately, never implicitly.
-- **CRON_SECRET must be ≥ 32 chars** (Zod `min(32)`, verified constant-time). The committed
-  placeholder `your_cron_secret_here` (19 chars) made `import { env }` throw at module load.
-  Generate with `crypto.randomBytes(32)`, never hand-type.
 - **Verify env against the real API, not just the schema.** The schema accepted both model ids;
   only a live call proved 2048 dims, the `:free` price, and the 429 behaviour. Schema-green is
   not integration-green.
@@ -54,14 +95,9 @@ Append one line when something wastes time. Delete entries that stop being true.
   its own schema for two sessions. Put doc examples in tests.
 - **A CI workflow is not done until it has run green.** Local gates do not exercise YAML. Push,
   read the run, *then* write the completion claim into `docs/06`.
-- **A security gate must be proven in both directions.** Plant a fake secret (must fail) and
-  realistic noise (must pass). Neither direction alone proves the gate works.
 - **`""` is present.** `??` and Zod `.optional()` both treat an empty string as a real value.
   Anything from a `.env` file or a GitHub `vars:` expression needs a `firstNonEmpty()` helper.
   This has now broken this repo twice.
-- **A bare identifier is not a secret.** Match credential *values* everywhere. Match *names*
-  only in the client bundle, where a name is itself the violation. The server bundle is
-  supposed to contain the env contract, which names every variable.
 - **Never write a timing claim you have not executed.** "Fails at build", "fails at boot" —
   strip the inputs and run it. And **move `.env.local` aside** to do so: both `next build` and
   `next start` auto-load it, so clearing `process.env` silently tests nothing.
@@ -73,10 +109,6 @@ Append one line when something wastes time. Delete entries that stop being true.
   GitHub reject the whole workflow in 0s with no logs, and `yaml.safe_load` passed it anyway.
   Anything that can invalidate a push needs an in-suite check, proven by feeding it a known-bad
   input before you trust its pass.
-- **Never print a credential — not to stdout, not to a transcript, not to "check" it.** A helper
-  script echoed the live service-role key into the conversation this session. The repo stayed
-  gitleaks-clean; the transcript did not. Reference a value by its length and prefix only, and
-  treat any log/CI/chat exposure as a leak: rotate per `docs/03` §4.4 and record the date.
 - **Gates run in order `typecheck → lint → test`, and none substitutes for another.** A new test
   file passed vitest 105/105 and still failed `tsc` (no vitest globals in this repo) and ESLint
   (`Array<T>`, implicit `any`, `String()` on an object). Green tests say nothing about types or
@@ -86,10 +118,10 @@ Append one line when something wastes time. Delete entries that stop being true.
   `pull_request` inside a `push`-only trigger — dead even with the token. Read every step's
   `with:` inputs and `if:` condition against the trigger block before committing, then read the
   first real run. Prefer the platform's native integration over a third-party deploy action.
+
+### Config
+
 - **One source of truth per setting.** Node was pinned in `.nvmrc`, `ci.yml`, `package.json`
   `engines`, and the Vercel dashboard — four places to move by hand, with drift producing no
   signal until prod disagrees with CI. Workflow-level `env.NODE_VERSION`, asserted by
   `tests/unit/workflow-yaml.test.ts`.
-- **`process.env.X!` anywhere in `src/` is a latent opaque 500.** The `!` asserts a value nothing
-  checked, and the SDK then fails with copy naming none of the five variables. Import `env` from
-  `@/lib/env` so Zod reports every missing variable by name at once.

@@ -1,13 +1,19 @@
-# 06 — Work Breakdown: Front-End, Back-End & Design Sequencing
+﻿# 06 â€” Work Breakdown: Front-End, Back-End & Design Sequencing
 
-**Product:** JobRadar · **Version:** 1.0 — MVP
+**Last reviewed:** 2026-10-04
+
+
+**Product:** JobRadar Â· **Version:** 1.0 â€” MVP
 **Source & Spec Reference:** [05 Feature Ticket List](./05-feature-ticket-list.md)
-**Architecture Reference:** [02 Technical Architecture](./02-technical-architecture.md) · [03 Security & Access](./03-security-and-access.md) · [04 Frontend Spec](./04-frontend-specification.md)
+**Architecture Reference:** [02 Technical Architecture](./02-technical-architecture.md) Â· [03 Security & Access](./03-security-and-access.md) Â· [04 Frontend Spec](./04-frontend-specification.md)
 **Last updated:** 2026-10-03
 
 ---
 
 ## 1. Guiding Principle: "Engine First, Form Last"
+
+**Last reviewed:** 2026-10-04
+
 
 To ensure rapid, verifiable progress and eliminate rework, we strictly decouple application logic from visual styling:
 
@@ -16,36 +22,39 @@ To ensure rapid, verifiable progress and eliminate rework, we strictly decouple 
 3. **Design & Polish Done Last:** Apply the "Signal" design tokens (`src/styles/tokens.css`), custom typography (Instrument Serif, Inter Tight, JetBrains Mono), custom component styles, animations, responsive breakpoints, WCAG contrast verification, and empty-state illustrations as a final, focused aesthetic pass.
 
 ```
-┌────────────────────────────────────────────────────────┐
-│ PHASE 0: SHARED FOUNDATION                             │
-│ Scaffold, TypeScript configs, Supabase DB & RLS       │
-└──────────────────────────┬─────────────────────────────┘
-                           │
-                           ▼
-┌────────────────────────────────────────────────────────┐
-│ PHASE 1: BACK-END (Track BE)                           │
-│ Schema, Connectors, Ingest, Scorer, Queue, Auth/APIs   │
-│ (Verified via Unit & Integration Tests, no UI)         │
-└──────────────────────────┬─────────────────────────────┘
-                           │
-                           ▼
-┌────────────────────────────────────────────────────────┐
-│ PHASE 2: FRONT-END FUNCTIONAL (Track FE)               │
-│ Routes, State, Forms, Server Actions, Kanban Logic     │
-│ (Verified via E2E Happy Paths with unstyled/raw UI)    │
-└──────────────────────────┬─────────────────────────────┘
-                           │
-                           ▼
-┌────────────────────────────────────────────────────────┐
-│ PHASE 3: DESIGN SYSTEM & POLISH (Track DS — LAST)      │
-│ "Signal" palette, Instrument Serif type, ScoreMeter,   │
-│ card styling, animations, responsive polish, a11y      │
-└────────────────────────────────────────────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ PHASE 0: SHARED FOUNDATION                             â”‚
+â”‚ Scaffold, TypeScript configs, Supabase DB & RLS       â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                           â”‚
+                           â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ PHASE 1: BACK-END (Track BE)                           â”‚
+â”‚ Schema, Connectors, Ingest, Scorer, Queue, Auth/APIs   â”‚
+â”‚ (Verified via Unit & Integration Tests, no UI)         â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                           â”‚
+                           â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ PHASE 2: FRONT-END FUNCTIONAL (Track FE)               â”‚
+â”‚ Routes, State, Forms, Server Actions, Kanban Logic     â”‚
+â”‚ (Verified via E2E Happy Paths with unstyled/raw UI)    â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                           â”‚
+                           â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ PHASE 3: DESIGN SYSTEM & POLISH (Track DS â€” LAST)      â”‚
+â”‚ "Signal" palette, Instrument Serif type, ScoreMeter,   â”‚
+â”‚ card styling, animations, responsive polish, a11y      â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 ---
 
 ## 2. The Seam Contract (Type Safety Across the Boundary)
+
+**Last reviewed:** 2026-10-04
+
 
 Before Phase 1 and Phase 2 split, the contract between Back-End and Front-End is defined in `src/types/`:
 - **`src/types/canonical-job.ts`**: The canonical job data shape.
@@ -56,25 +65,34 @@ The Back-End exposes typed Server Actions in `src/app/api/actions/` and Route Ha
 
 ---
 
-## 3. Phase 0 — Shared Foundation
+## 3. Phase 0 â€” Shared Foundation
+
+**Last reviewed:** 2026-10-04
+
 
 These tickets must be completed before Track BE branches off.
 
 | ID | Title | Origin Ticket | Priority | Deliverable |
 |---|---|---|---|---|
-| **FND-001** | Repo Scaffold & Strict Tooling | `ENG-001` | MUST | Project structure, TypeScript strict configs, linting, Vitest & Playwright configs. **Completed 2026-10-03:** root `app/layout.tsx` + `(marketing)/page.tsx` render `/`; Tailwind 4 CSS-first wiring via `postcss.config.mjs` + `@tailwindcss/postcss`; `eslint-config-next` pinned; secret scanner (`gitleaks`) installed and pre-commit hooked. Verified complete — `pnpm dev` boots, `pnpm lint`, `pnpm typecheck`, `pnpm test` all pass. |
-| **FND-002** | Core Database Schema & Migrations | `ENG-003` | MUST | `supabase/migrations/0001_init.sql` containing all 13 enums, 19 tables, pgvector, pg_cron, and seed data. Must include the `halfvec` expression index on `jobs.embedding` ([02](./02-technical-architecture.md) §5.4) and an index on every foreign key in §5.10. **Completed 2026-10-03:** Migration created and applied successfully to local Postgres with pgvector/pg_cron. All 19 tables, 13 enums, views, functions, HNSW indexes, and RLS enablement verified. Seed data inserted. |
-| **FND-003** | Row-Level Security (RLS) & Policies | `ENG-004` | MUST | RLS policies on all tables using the `(select auth.uid())` wrapper, `force row level security` on every table, `is_admin()` helper, security integration tests. See [03](./03-security-and-access.md) §4.1 and §4.1a. **Completed 2026-10-04:** RLS enabled on all 19 tables with `force row level security`; 26 policies created matching docs/03 §4.2 (owner access, admin read, authenticated read for shared corpus); `is_admin()` helper with `(select auth.jwt())` wrapper for performance. Verified with `pg_policies`. |
-| **FND-004** | Structured Logger, Errors & Sentry | `ENG-005` | MUST | `lib/logger.ts` with secret redaction, `lib/errors/` error taxonomy, Sentry init. **Completed 2026-10-04:** `lib/logger.ts` with JSON structured logging, requestId/runId correlation, secret redaction for all key formats (Supabase, OpenRouter, Stripe, generic); `lib/errors/codes.ts` with 22 error codes matching docs/03 §5.1; `lib/errors/AppError.ts` base class with code/httpStatus/requestId/userId; `lib/sentry.ts` with 20% trace sampling, sendDefaultPii: false, beforeSend hook attaching error_code/request_id/user_id; global error.tsx and not-found.tsx with friendly copy and requestId display. |
-| **FND-005** | CI Pipeline & Client Secret Scanner | `ENG-006` | MUST | GitHub Actions workflow for lint, test, build, and client bundle secret grep. **Completed 2026-10-04 (first push), corrected five times on 2026-10-04 (pushes 2–6).** The first version was committed as "Completed" while 3 of its 7 jobs failed on the very first push — a green claim with a red run behind it. Corrections: (1) **secret-scan** — the grep `(supabase\|sk-\|whsec_\|rk_live\|sb_secret_\|sb_publishable_)` matched *names*, not credential *values*, so it failed on every build (`supabase` is the library name, in every chunk) while matching a real leak no better. Replaced with `scripts/scan-bundle-secrets.ts`: 9 credential **shapes** each requiring 20+ chars of key material, plus exact-value matching against live env secrets, plus a `SUPABASE_SERVICE_ROLE_KEY` reference check. Verified in both directions — a planted `sb_secret_<40 chars>` fails it, ordinary minified code containing `supabase`/`sk-`/bare `sb_publishable_` passes. Written in TypeScript rather than `.mjs` so `pnpm typecheck` covers the gate itself: a typo in a path or regex must fail the build, not silently disable the check. Exits 2 when `.next/` is missing, so a skipped build cannot read as a passing scan. (2) **audit** — `pnpm audit --level=high` is not a pnpm flag; pnpm exits 2 with `unexpected argument '--level'`, which reads as a CVE failure but is a typo. Corrected to `--audit-level=high`, which then surfaced 4 real advisories in `postcss@8.4.31` (pulled in transitively by `next@15.5.27`, 2 high). Fixed with `overrides: postcss 8.5.28` in `pnpm-workspace.yaml`; `pnpm audit --prod --audit-level=high` now exits 0 and `pnpm build` is unchanged. **Round 4 — `auth/callback` env contract (commit `2aede77`) and its CI consequence.** The route read `process.env.NEXT_PUBLIC_SUPABASE_URL!`; the `!` asserted a value nothing checked, so the first production deploy returned an opaque `500` — `Error: Your project's URL and Key are required to create a Supabase client!` — naming none of the missing variables. Rewritten to import `env` from `@/lib/env`. That change then broke CI's Build job (`Failed to collect page data for /auth/callback`), because `next build` evaluates route modules and the five required vars are absent in CI. Fixed with **placeholder** values in workflow-level `env` — fake by design (the schema checks shape, not function; AGENTS.md forbids live API calls in CI) and shaped to match no credential pattern, since `secret-scan` runs in the same workflow. `tests/unit/ci-placeholders.test.ts` (4 tests) is the oracle: **CI cannot test its own environment**, so a unit test is the only available check. **Two false claims corrected.** I twice asserted — once in a code comment, once in a commit message — that `next build` *succeeds* without env vars because "Next does not evaluate dynamic route modules at build time." It does, and it does fail. The test behind both claims was invalid: `process.env` was cleared but `.env.local` was left in place, and Next auto-loads it, satisfying the schema from under the experiment. The failure then appeared in CI for precisely the reason I had denied. Now a hard rule in `notes.md`: move `.env.local` aside to test an env-dependent failure, and never write an unexecuted timing claim. **Round 5 — invalid workflow YAML.** A revert-edit left two `secret-scan:` job blocks in `ci.yml`. GitHub rejects duplicate mapping keys at parse time, so the run completed in **0 seconds with zero jobs and no log** — and nothing in the repo caught it: lint does not read YAML, typecheck does not, and `python -c "yaml.safe_load(...)"` **passed**, because PyYAML's default loader silently keeps the last value for a duplicate key. Fixed, and permanently gated by `tests/unit/workflow-yaml.test.ts` (5 tests): a hand-rolled duplicate-rejecting YAML loader asserting no duplicate keys at any depth, the exact 7-job set FND-005 requires, the documented `needs` ordering, single-source Node pinning, and the five required env vars. The duplicate-key assertion was proven by re-introducing the duplicate and watching it fail — a config gate is only a gate once you have seen it reject. (3) **e2e** — failed with `Error: No tests found` because `tests/e2e/` held only `.gitkeep`; the job reported failure while proving nothing. Added `tests/e2e/smoke.spec.ts` covering the 4 routes Phase 0 actually created (marketing, login, 404, CTA navigation, mobile overflow, bundle-leak check) across all 3 browser projects — 18 tests, green. Scope note: this is **not** the Phase 2 E2E suite; docs/06 gates that on "onboarding → feed → apply → stage move", and those flows do not exist yet. **Second e2e bug, found on the CI run that verified the first fix (run 37193601701):** all 18 tests then failed with `page.goto: Protocol error (Playwright.navigate): Cannot navigate to invalid URL`. Cause: CI passes `${{ vars.PLAYWRIGHT_TEST_BASE_URL }}`, and GitHub expands an unset repository variable to `""`, *not* `undefined` — so the `??` chain did not fall through, `baseURL` resolved to `""`, the localhost test failed, `webServer` was omitted, and no dev server was ever started. Same blank-vs-undefined trap that broke the env schema (see `notes.md`, 2026-10-03). Fixed with a `firstNonEmpty()` helper; verified by running the suite with the variable set to `""` (18 pass) and against an external URL (correctly boots no dev server). (4) **deploy** — `.github/workflows/deploy.yml` used `amondnet/vercel-action` with `secrets.VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`; none were set and no Vercel project existed, so the job died on `Input required and not supplied: vercel-token`. Its `deploy-preview` job was also dead on arrival — it was gated on `github.event_name == 'pull_request'` inside a workflow triggered only by `push`. **Removed in favour of Vercel's Git integration**, per docs/07 §Step 4 ("zero YAML"), which needs no token in the repo and gives per-PR previews for free. Vercel project `jobradar` (`prj_zy6swdFl6D8QXjzU6zqWIzPv5Rmw`, team `team_w5vI8yJvavpu6bvvW5Zngmk0`) created with Node 20.x and `pnpm install --frozen-lockfile`. Remaining step is a one-time dashboard action: connect the GitHub repo to the project. |
+| **FND-001** | Repo Scaffold & Strict Tooling | `ENG-001` | MUST | Project structure, TypeScript strict configs, linting, Vitest & Playwright configs. **Completed 2026-10-03:** root `app/layout.tsx` + `(marketing)/page.tsx` render `/`; Tailwind 4 CSS-first wiring via `postcss.config.mjs` + `@tailwindcss/postcss`; `eslint-config-next` pinned; secret scanner (`gitleaks`) installed and pre-commit hooked. Verified complete â€” `pnpm dev` boots, `pnpm lint`, `pnpm typecheck`, `pnpm test` all pass. |
+| **FND-002** | Core Database Schema & Migrations | `ENG-003` | MUST | `supabase/migrations/0001_init.sql` containing all 13 enums, 19 tables, pgvector, pg_cron, and seed data. Must include the `halfvec` expression index on `jobs.embedding` ([02](./02-technical-architecture.md) Â§5.4) and an index on every foreign key in Â§5.10. **Completed 2026-10-03:** Migration created and applied successfully to local Postgres with pgvector/pg_cron. All 19 tables, 13 enums, views, functions, HNSW indexes, and RLS enablement verified. Seed data inserted. |
+| **FND-003** | Row-Level Security (RLS) & Policies | `ENG-004` | MUST | RLS policies on all tables using the `(select auth.uid())` wrapper, `force row level security` on every table, `is_admin()` helper, security integration tests. See [03](./03-security-and-access.md) Â§4.1 and Â§4.1a. **Completed 2026-10-04:** RLS enabled on all 19 tables with `force row level security`; 26 policies created matching docs/03 Â§4.2 (owner access, admin read, authenticated read for shared corpus); `is_admin()` helper with `(select auth.jwt())` wrapper for performance. Verified with `pg_policies`. |
+| **FND-004** | Structured Logger, Errors & Sentry | `ENG-005` | MUST | `lib/logger.ts` with secret redaction, `lib/errors/` error taxonomy, Sentry init. **Completed 2026-10-04:** `lib/logger.ts` with JSON structured logging, requestId/runId correlation, secret redaction for all key formats (Supabase, OpenRouter, Stripe, generic); `lib/errors/codes.ts` with 22 error codes matching docs/03 Â§5.1; `lib/errors/AppError.ts` base class with code/httpStatus/requestId/userId; `lib/sentry.ts` with 20% trace sampling, sendDefaultPii: false, beforeSend hook attaching error_code/request_id/user_id; global error.tsx and not-found.tsx with friendly copy and requestId display. |
+| **FND-005** | CI Pipeline & Client Secret Scanner | `ENG-006` | MUST | GitHub Actions workflow for lint, test, build, and client bundle secret grep. **Completed 2026-10-04 (first push), corrected five times on 2026-10-04 (pushes 2â€“6).** The first version was committed as "Completed" while 3 of its 7 jobs failed on the very first push â€” a green claim with a red run behind it. Corrections: (1) **secret-scan** â€” the grep `(supabase\|sk-\|whsec_\|rk_live\|sb_secret_\|sb_publishable_)` matched *names*, not credential *values*, so it failed on every build (`supabase` is the library name, in every chunk) while matching a real leak no better. Replaced with `scripts/scan-bundle-secrets.ts`: 9 credential **shapes** each requiring 20+ chars of key material, plus exact-value matching against live env secrets, plus a `SUPABASE_SERVICE_ROLE_KEY` reference check. Verified in both directions â€” a planted `sb_secret_<40 chars>` fails it, ordinary minified code containing `supabase`/`sk-`/bare `sb_publishable_` passes. Written in TypeScript rather than `.mjs` so `pnpm typecheck` covers the gate itself: a typo in a path or regex must fail the build, not silently disable the check. Exits 2 when `.next/` is missing, so a skipped build cannot read as a passing scan. (2) **audit** â€” `pnpm audit --level=high` is not a pnpm flag; pnpm exits 2 with `unexpected argument '--level'`, which reads as a CVE failure but is a typo. Corrected to `--audit-level=high`, which then surfaced 4 real advisories in `postcss@8.4.31` (pulled in transitively by `next@15.5.27`, 2 high). Fixed with `overrides: postcss 8.5.28` in `pnpm-workspace.yaml`; `pnpm audit --prod --audit-level=high` now exits 0 and `pnpm build` is unchanged. **Round 4 â€” `auth/callback` env contract (commit `2aede77`) and its CI consequence.** The route read `process.env.NEXT_PUBLIC_SUPABASE_URL!`; the `!` asserted a value nothing checked, so the first production deploy returned an opaque `500` â€” `Error: Your project's URL and Key are required to create a Supabase client!` â€” naming none of the missing variables. Rewritten to import `env` from `@/lib/env`. That change then broke CI's Build job (`Failed to collect page data for /auth/callback`), because `next build` evaluates route modules and the five required vars are absent in CI. Fixed with **placeholder** values in workflow-level `env` â€” fake by design (the schema checks shape, not function; AGENTS.md forbids live API calls in CI) and shaped to match no credential pattern, since `secret-scan` runs in the same workflow. `tests/unit/ci-placeholders.test.ts` (4 tests) is the oracle: **CI cannot test its own environment**, so a unit test is the only available check. **Two false claims corrected.** I twice asserted â€” once in a code comment, once in a commit message â€” that `next build` *succeeds* without env vars because "Next does not evaluate dynamic route modules at build time." It does, and it does fail. The test behind both claims was invalid: `process.env` was cleared but `.env.local` was left in place, and Next auto-loads it, satisfying the schema from under the experiment. The failure then appeared in CI for precisely the reason I had denied. Now a hard rule in `notes.md`: move `.env.local` aside to test an env-dependent failure, and never write an unexecuted timing claim. **Round 5 â€” invalid workflow YAML.** A revert-edit left two `secret-scan:` job blocks in `ci.yml`. GitHub rejects duplicate mapping keys at parse time, so the run completed in **0 seconds with zero jobs and no log** â€” and nothing in the repo caught it: lint does not read YAML, typecheck does not, and `python -c "yaml.safe_load(...)"` **passed**, because PyYAML's default loader silently keeps the last value for a duplicate key. Fixed, and permanently gated by `tests/unit/workflow-yaml.test.ts` (5 tests): a hand-rolled duplicate-rejecting YAML loader asserting no duplicate keys at any depth, the exact 7-job set FND-005 requires, the documented `needs` ordering, single-source Node pinning, and the five required env vars. The duplicate-key assertion was proven by re-introducing the duplicate and watching it fail â€” a config gate is only a gate once you have seen it reject. (3) **e2e** â€” failed with `Error: No tests found` because `tests/e2e/` held only `.gitkeep`; the job reported failure while proving nothing. Added `tests/e2e/smoke.spec.ts` covering the 4 routes Phase 0 actually created (marketing, login, 404, CTA navigation, mobile overflow, bundle-leak check) across all 3 browser projects â€” 18 tests, green. Scope note: this is **not** the Phase 2 E2E suite; docs/06 gates that on "onboarding â†’ feed â†’ apply â†’ stage move", and those flows do not exist yet. **Second e2e bug, found on the CI run that verified the first fix (run 37193601701):** all 18 tests then failed with `page.goto: Protocol error (Playwright.navigate): Cannot navigate to invalid URL`. Cause: CI passes `${{ vars.PLAYWRIGHT_TEST_BASE_URL }}`, and GitHub expands an unset repository variable to `""`, *not* `undefined` â€” so the `??` chain did not fall through, `baseURL` resolved to `""`, the localhost test failed, `webServer` was omitted, and no dev server was ever started. Same blank-vs-undefined trap that broke the env schema (see `notes.md`, 2026-10-03). Fixed with a `firstNonEmpty()` helper; verified by running the suite with the variable set to `""` (18 pass) and against an external URL (correctly boots no dev server). (4) **deploy** â€” `.github/workflows/deploy.yml` used `amondnet/vercel-action` with `secrets.VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`; none were set and no Vercel project existed, so the job died on `Input required and not supplied: vercel-token`. Its `deploy-preview` job was also dead on arrival â€” it was gated on `github.event_name == 'pull_request'` inside a workflow triggered only by `push`. **Removed in favour of Vercel's Git integration**, per docs/07 Â§Step 4 ("zero YAML"), which needs no token in the repo and gives per-PR previews for free. Vercel project `jobradar` (`prj_zy6swdFl6D8QXjzU6zqWIzPv5Rmw`, team `team_w5vI8yJvavpu6bvvW5Zngmk0`) created with Node 20.x and `pnpm install --frozen-lockfile`. Remaining step is a one-time dashboard action: connect the GitHub repo to the project. |
 
 ---
 
-## 4. Phase 1 — Back-End Track (`BE`)
+## 4. Phase 1 â€” Back-End Track (`BE`)
+
+**Last reviewed:** 2026-10-04
+
 
 No styling or UI components are built here. Work is completed when automated unit and integration tests pass with recorded fixtures.
 
 ### 4.1 Ingestion & Connectors (Subsystem)
+
+**Last reviewed:** 2026-10-04
+
 | ID | Title | Origin Ticket | Priority | Focus |
 |---|---|---|---|---|
 | **BE-101** | Connector Interface & Registry | `ING-001` | MUST | `SourceConnector` interface, `RawJob` schema, and dynamic registry. |
@@ -86,15 +104,18 @@ No styling or UI components are built here. Work is completed when automated uni
 | **BE-107** | Deduplication Engine (Exact + Trigram) | `ING-007` | MUST | SHA-256 dedupe hash upsert + pg_trgm fuzzy similarity merger. |
 | **BE-108** | Task Queue Engine & Leases | `ING-008` | MUST | `FOR UPDATE SKIP LOCKED` claim logic, 5-minute leases, exponential backoff. |
 | **BE-109** | Cron Ingress Handlers | `ING-009` | MUST | Constant-time `CRON_SECRET` validation on `/api/cron/*` routes. |
-| **BE-110** | Freshness & Expiry Lifecycle | `ING-010` | MUST | Status decay (`active` → `stale` → `expired`) & freshness sub-score decay. |
+| **BE-110** | Freshness & Expiry Lifecycle | `ING-010` | MUST | Status decay (`active` â†’ `stale` â†’ `expired`) & freshness sub-score decay. |
 | **BE-111** | Run Logging & Observability | `ING-011` | MUST | `scrape_runs` metrics recorder, duration, error capture, API call attribution. |
 | **BE-112** | Manual Trigger Server Action | `ING-012` | SHOULD | `runNow` action with rate-limiting and quota verification. |
 
 ### 4.2 Matching & Scoring (Subsystem)
+
+**Last reviewed:** 2026-10-04
+
 | ID | Title | Origin Ticket | Priority | Focus |
 |---|---|---|---|---|
 | **BE-201** | Hard Gate Filters | `SCR-001` | MUST | `gates.ts`: Knockout rules (blocked companies, keywords, salary floor, work mode). |
-| **BE-202** | Deterministic Rule-Based Scorer | `SCR-002` | MUST | 0–100 scoring model with weight breakdown JSON builder. |
+| **BE-202** | Deterministic Rule-Based Scorer | `SCR-002` | MUST | 0â€“100 scoring model with weight breakdown JSON builder. |
 | **BE-203** | pgvector Embedding Pipeline | `SCR-003` | MUST | OpenRouter `nvidia/nemotron-3-embed-1b:free` (2048-dim) batching and cosine distance calculation. |
 | **BE-204** | Score Composition & Persistence | `SCR-004` | MUST | Blends rule + semantic score into `job_scores`, maintains `v_ranked_jobs`. |
 | **BE-205** | Batch Profile Rescorer | `SCR-005` | MUST | Requeues user's jobs asynchronously on preference update. |
@@ -102,6 +123,9 @@ No styling or UI components are built here. Work is completed when automated uni
 | **BE-207** | Dynamic Weight Flags | `SCR-007` | NICE | Flag-overridable weights without code deployments. |
 
 ### 4.3 Auth, User Data & Server Actions
+
+**Last reviewed:** 2026-10-04
+
 | ID | Title | Origin Ticket | Priority | Focus |
 |---|---|---|---|---|
 | **BE-301** | Magic Link & OAuth Auth Endpoints | `AUT-001`, `AUT-002` | MUST | Server-side auth handlers, PKCE callback, cookie manager (`httpOnly`). |
@@ -120,7 +144,10 @@ No styling or UI components are built here. Work is completed when automated uni
 
 ---
 
-## 5. Phase 2 — Front-End Functional Track (`FE`)
+## 5. Phase 2 â€” Front-End Functional Track (`FE`)
+
+**Last reviewed:** 2026-10-04
+
 
 Built using plain semantic HTML, unstyled Radix UI primitives, or basic grid scaffolding. All screens, interactions, and state must work before any design tokens or custom aesthetics are added.
 
@@ -147,7 +174,10 @@ Built using plain semantic HTML, unstyled Radix UI primitives, or basic grid sca
 
 ---
 
-## 6. Phase 3 — Design System & Visual Polish (`DS` — DONE LAST)
+## 6. Phase 3 â€” Design System & Visual Polish (`DS` â€” DONE LAST)
+
+**Last reviewed:** 2026-10-04
+
 
 This is the final phase. Visual design, brand aesthetics, typography, micro-interactions, responsive refinements, and accessibility compliance are implemented across the entire working application.
 
@@ -156,19 +186,22 @@ This is the final phase. Visual design, brand aesthetics, typography, micro-inte
 | **DS-001** | Token Architecture & Theme Setup | `ENG-002` | MUST | Activate `src/styles/tokens.css` across Tailwind 4, warm paper background (`#F6F4EF`), ink text (`#14161A`). |
 | **DS-002** | Editorial Typography Integration | `ENG-002`, `QUA-002` | MUST | Load Instrument Serif, Inter Tight, and JetBrains Mono with zero layout shift; set optical line-heights and tabular numbers. |
 | **DS-003** | Core Component System Visuals | `ENG-002` | MUST | High-craft styling for buttons (primary electric blue `#2440F5`, secondary, ghost), inputs, selects, dialogs, toasts. |
-| **DS-004** | Job Card & ScoreMeter Visual Styling | `ENG-002`, `FED-001` | MUST | Distinctive card styling, source badges, hover lifts, acid lime (`#C6F24E`) for scores ≥85, tabular score badges. |
+| **DS-004** | Job Card & ScoreMeter Visual Styling | `ENG-002`, `FED-001` | MUST | Distinctive card styling, source badges, hover lifts, acid lime (`#C6F24E`) for scores â‰¥85, tabular score badges. |
 | **DS-005** | Feed & Detail Visual Polish | `FED-001`, `JOB-001` | MUST | Editorial layout, clean typography hierarchy, read-more gradient fades, formatted salary tags, company logo fallbacks. |
 | **DS-006** | Kanban Tracker Aesthetic Treatment | `TRK-003` | MUST | Column tints, stage pill badges, clean card grab states, smooth drop transitions, empty column states. |
 | **DS-007** | Custom Empty States & Illustrations | `QUA-006` | SHOULD | Editorial typography empty states with subtle line illustrations (never bare "No data"). |
 | **DS-008** | Loading Skeleton Shapes & Shimmers | `ENG-002`, `QUA-006` | MUST | Shape-matched skeletons mimicking actual job cards and kanban columns (no spinner-only views). |
-| **DS-009** | Micro-Interactions & Motion Budget | `04 §4.4` | MUST | Card dismiss animations (fade + slide out), tab underlines, drawer entrance transitions, `prefers-reduced-motion` compliance. |
-| **DS-010** | Responsive Polish (Mobile to Ultrawide) | `QUA-004` | MUST | Bottom navigation rail for mobile, bottom-sheet dialogs, touch targets ≥44px, seamless desktop multi-column rails. |
+| **DS-009** | Micro-Interactions & Motion Budget | `04 Â§4.4` | MUST | Card dismiss animations (fade + slide out), tab underlines, drawer entrance transitions, `prefers-reduced-motion` compliance. |
+| **DS-010** | Responsive Polish (Mobile to Ultrawide) | `QUA-004` | MUST | Bottom navigation rail for mobile, bottom-sheet dialogs, touch targets â‰¥44px, seamless desktop multi-column rails. |
 | **DS-011** | WCAG 2.1 AA Accessibility & Contrast Pass | `QUA-003` | MUST | Verified 4.5:1 contrast ratios, non-color-only score indicators, keyboard focus rings (`2px brand outline`), screen reader audit. |
 | **DS-012** | Performance & Lighthouse 90+ Tuning | `QUA-002` | MUST | Image optimisation, CSS bundle tree-shaking, SSR streaming verification, sub-2.0s LCP guarantee. |
 
 ---
 
 ## 7. Master Traceability Matrix
+
+**Last reviewed:** 2026-10-04
+
 
 Every single ticket from [05 Feature Ticket List](./05-feature-ticket-list.md) maps into this front-end / back-end / design structure:
 
@@ -211,19 +244,19 @@ Every single ticket from [05 Feature Ticket List](./05-feature-ticket-list.md) m
 | **SCR-005** | Phase 1 | `BE-205` | Batch profile rescoring worker |
 | **SCR-006** | Phase 1 | `BE-206` | LLM fit rationale |
 | **SCR-007** | Phase 1 | `BE-207` | Score weight feature flags |
-| **FED-001** | Split | `FE-105`, `DS-004`, `DS-005` | Feed: FE functional list → DS styling |
+| **FED-001** | Split | `FE-105`, `DS-004`, `DS-005` | Feed: FE functional list â†’ DS styling |
 | **FED-002** | Split | `BE-305`, `FE-107` | Feed actions: BE mutations + FE buttons |
 | **FED-003** | Split | `BE-306`, `FE-106` | Filters & search: BE query + FE controls |
 | **FED-004** | Phase 2 | `FE-105` | "New since last visit" toggle & filter |
 | **FED-005** | Split | `BE-107`, `FE-107` | Duplicate cluster handling |
 | **FED-006** | Phase 2 | `FE-105` | Keyboard navigation (`j`/`k`/`s`/`x`/`a`) |
-| **JOB-001** | Split | `FE-108`, `DS-005` | Job detail: FE layout → DS styling |
+| **JOB-001** | Split | `FE-108`, `DS-005` | Job detail: FE layout â†’ DS styling |
 | **JOB-002** | Split | `FE-109`, `DS-004` | Score breakdown disclosure |
 | **JOB-003** | Split | `BE-307`, `FE-110` | Mark applied: BE mutation + FE modal |
 | **JOB-004** | Phase 2 | `FE-108` | Related sightings list |
 | **TRK-001** | Phase 1 | `BE-307` | Application record creation & snapshots |
 | **TRK-002** | Phase 1 | `BE-307` | Stage pipeline validation & history events |
-| **TRK-003** | Split | `FE-111`, `DS-006` | Kanban board: FE drag-and-drop → DS styling |
+| **TRK-003** | Split | `FE-111`, `DS-006` | Kanban board: FE drag-and-drop â†’ DS styling |
 | **TRK-004** | Phase 2 | `FE-112` | Application drawer detail |
 | **TRK-005** | Split | `BE-307`, `FE-113` | Tracker stats: BE calculation + FE cards |
 | **TRK-006** | Split | `BE-307`, `FE-114` | Follow-up reminders panel |
@@ -249,84 +282,112 @@ Every single ticket from [05 Feature Ticket List](./05-feature-ticket-list.md) m
 | **QUA-004** | Phase 3 | `DS-010` | Responsive cross-device layout pass |
 | **QUA-005** | Cross | Launch | Pre-launch checklist & security sign-off |
 | **QUA-006** | Phase 3 | `DS-007`, `DS-008` | Empty & loading state polish |
-| **BKG-001..012** | Backlog | — | Phase 2 / Backlog items |
+| **BKG-001..012** | Backlog | â€” | Phase 2 / Backlog items |
 
 ---
 
 ## 8. Execution Playbook
 
-How to run the three phases without the plan rotting. Generic advice (small commits, write tests) is omitted — only the rules specific to an engine-first / design-last split are here.
+**Last reviewed:** 2026-10-04
+
+
+How to run the three phases without the plan rotting. Generic advice (small commits, write tests) is omitted â€” only the rules specific to an engine-first / design-last split are here.
 
 ### 8.1 Freeze the seam before Phase 1 starts
 
+**Last reviewed:** 2026-10-04
+
+
 The back-end finishes before the front-end exists, so the contract *is* the product.
 
-- **Zod is the source of truth; TypeScript is derived.** Define each schema once in `src/types/api.ts` and export `z.infer<typeof X>`. Never hand-write a parallel interface — two definitions drift.
+- **Zod is the source of truth; TypeScript is derived.** Define each schema once in `src/types/api.ts` and export `z.infer<typeof X>`. Never hand-write a parallel interface â€” two definitions drift.
 - **Contract-first by ticket, not by phase.** A BE ticket that changes an API shape updates the type file **in the same commit**. A FE ticket opened against a stale type is a blocked ticket.
-- **Nothing bypasses the seam.** Components never call PostgREST directly — only `lib/db/queries/` and Server Actions. One direct call inside a component and the boundary is gone.
+- **Nothing bypasses the seam.** Components never call PostgREST directly â€” only `lib/db/queries/` and Server Actions. One direct call inside a component and the boundary is gone.
 
 ### 8.2 Phase gates are tests, not opinions
+
+**Last reviewed:** 2026-10-04
+
 
 Each phase ends with an objective, automatable gate. No "looks done."
 
 | Gate | Passes when |
 |---|---|
-| **P0 → P1** | `supabase db reset` from empty succeeds · RLS policy tests green · CI green with zero features |
-| **P1 → P2** | All BE tests green with **no live API calls** · `lib/scoring` + `lib/ingest` ≥85% · scorer proven deterministic (same input → same score) |
-| **P2 → P3** | Playwright E2E green against **unstyled** UI: onboarding → feed → apply → stage move |
-| **P3 → Ship** | axe zero violations · AA contrast · Lighthouse ≥90 · `prefers-reduced-motion` honoured |
+| **P0 â†’ P1** | `supabase db reset` from empty succeeds Â· RLS policy tests green Â· CI green with zero features |
+| **P1 â†’ P2** | All BE tests green with **no live API calls** Â· `lib/scoring` + `lib/ingest` â‰¥85% Â· scorer proven deterministic (same input â†’ same score) |
+| **P2 â†’ P3** | Playwright E2E green against **unstyled** UI: onboarding â†’ feed â†’ apply â†’ stage move |
+| **P3 â†’ Ship** | axe zero violations Â· AA contrast Â· Lighthouse â‰¥90 Â· `prefers-reduced-motion` honoured |
 
-The **P2 gate is the one people skip.** If the flow doesn't work in plain HTML, styling it won't fix it — you'd just be debugging logic through CSS.
+The **P2 gate is the one people skip.** If the flow doesn't work in plain HTML, styling it won't fix it â€” you'd just be debugging logic through CSS.
 
 ### 8.3 Split accessibility across phases
+
+**Last reviewed:** 2026-10-04
+
 
 The most common failure of "design last" is lumping all a11y into the design phase.
 
 | Phase owns | Covers |
 |---|---|
-| **Phase 2 — structure** | Semantic elements · real `<button>` not `<div onClick>` · label/control association · heading order · focus order · live regions · `aria-expanded` |
-| **Phase 3 — presentation** | Contrast ratios · focus-ring visibility · non-colour-only signalling · touch-target size |
+| **Phase 2 â€” structure** | Semantic elements Â· real `<button>` not `<div onClick>` Â· label/control association Â· heading order Â· focus order Â· live regions Â· `aria-expanded` |
+| **Phase 3 â€” presentation** | Contrast ratios Â· focus-ring visibility Â· non-colour-only signalling Â· touch-target size |
 
 If structure slips to Phase 3, the design pass becomes a rewrite. Hence `DS-011` is a contrast and screen-reader *audit*, not markup work.
 
 ### 8.4 "Unstyled" must not become "unstructured"
 
+**Last reviewed:** 2026-10-04
+
+
 Use **Radix primitives unstyled from Day 1 of Phase 2.** Behaviour (focus trap, keyboard nav, drag-and-drop) is Phase 2; visuals are Phase 3.
 
-- `Dialog`, `Dropdown`, `Tabs` → Radix with **no CSS** in P2.
-- `Button` → a thin wrapper around a native `<button>`.
+- `Dialog`, `Dropdown`, `Tabs` â†’ Radix with **no CSS** in P2.
+- `Button` â†’ a thin wrapper around a native `<button>`.
 
 Hand-rolling a modal out of `<div>`s in P2 means Phase 3 rewrites it instead of restyling it.
 
 ### 8.5 Test the back-end without the world
 
-- **Fixtures, never live APIs, in CI** — recorded JSON per connector in `tests/integration/fixtures/sources/`. Live calls burn quota, go flaky, and block unrelated PRs when a source rate-limits.
-- **Testcontainers Postgres** for RLS and queue tests — `FOR UPDATE SKIP LOCKED` concurrency can't be validated on SQLite or a mock.
+**Last reviewed:** 2026-10-04
+
+
+- **Fixtures, never live APIs, in CI** â€” recorded JSON per connector in `tests/integration/fixtures/sources/`. Live calls burn quota, go flaky, and block unrelated PRs when a source rate-limits.
+- **Testcontainers Postgres** for RLS and queue tests â€” `FOR UPDATE SKIP LOCKED` concurrency can't be validated on SQLite or a mock.
 - **Inject the clock.** Freshness decay, digest timezones and retry backoff become deterministic with a fake clock instead of a `sleep`.
 - **Prove idempotency explicitly:** run each queue handler twice, assert one row. This is what makes the retry/backoff design actually safe.
 
 ### 8.6 Rules for AI-assisted execution
 
+**Last reviewed:** 2026-10-04
+
+
 The tickets in [05](./05-feature-ticket-list.md) were written prompt-sized on purpose. Two rules make that work:
 
-1. **Give the agent the ticket *and* its doc sections** — e.g. *"implement `BE-107`; schema in 02 §6.2, RLS in 03 §4.2."* Tickets alone invite invention.
+1. **Give the agent the ticket *and* its doc sections** â€” e.g. *"implement `BE-107`; schema in 02 Â§6.2, RLS in 03 Â§4.2."* Tickets alone invite invention.
 2. **Require evidence before "done":** run `pnpm typecheck && pnpm test` and paste the output before claiming completion. A green checkmark from a model with no output behind it is worthless.
 
-Plus the anti-invention rule from the README: **if the agent needs something the docs don't specify — a table, an env var, a colour, an endpoint — it updates the doc first, then builds.** That keeps docs 01–06 the source of truth instead of a description of what the code happened to become.
+Plus the anti-invention rule from the README: **if the agent needs something the docs don't specify â€” a table, an env var, a colour, an endpoint â€” it updates the doc first, then builds.** That keeps docs 01â€“06 the source of truth instead of a description of what the code happened to become.
 
 ### 8.7 Three anti-patterns to block explicitly
+
+**Last reviewed:** 2026-10-04
+
 
 | Anti-pattern | Why it hurts |
 |---|---|
 | A "temporary" hex value or inline style in Phase 2 | It becomes de-facto design and contradicts `tokens.css`. Turn on the CI grep at the **start of P2**, not P3. |
-| Schema changes after P1 without a migration + doc 02 update | The traceability matrix in §7 rots silently otherwise. |
+| Schema changes after P1 without a migration + doc 02 update | The traceability matrix in Â§7 rots silently otherwise. |
 | Scope creep into design during P1 | "Just quickly style this admin table" costs more than it saves and produces a third visual system. |
 
 ---
 
 ## 9. Immediate Next Step: Phase 0 & Phase 1 Execution
 
+**Last reviewed:** 2026-10-04
+
+
 Now that the boundary and sequencing are locked in:
 1. Complete **Phase 0 Foundation** (`FND-001` through `FND-005`).
 2. Implement **Phase 1 Back-End** starting with the Database Migrations (`FND-002`) and Ingestion Connectors (`BE-101`..`BE-105`).
 3. Validate the entire backend with automated tests before writing any front-end UI.
+

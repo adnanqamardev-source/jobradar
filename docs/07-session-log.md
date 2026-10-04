@@ -1,3 +1,8 @@
+﻿> **NOT AUTHORITY.** This is a historical session log. The authority for current state is [docs/01-prd.md](./01-prd.md) through [docs/06-work-breakdown.md](./06-work-breakdown.md). Read this only to understand what happened in past sessions.
+
+---
+
+**Last reviewed:** 2026-10-04
 # Implementation Plan — Phase 0 Completion → Phase 2
 
 **Status:** refreshed 2026-10-03 (second session). All spec defects D1–D7, D11 and D12 are

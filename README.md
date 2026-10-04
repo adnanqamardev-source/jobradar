@@ -10,16 +10,24 @@
 
 ## Documentation
 
-These five documents are the source of truth. Read them in order; each one builds on the last.
+These seven documents are the source of truth. Read them in order; each one builds on the last.
 
 | # | Document | What it answers |
 |---|---|---|
 | 01 | [Product Requirements](./docs/01-prd.md) | What are we building, for whom, and how do we know it worked? |
 | 02 | [Technical Architecture](./docs/02-technical-architecture.md) | What tools, what folder structure, what database schema, what config? |
+| 02a | [Database Schema](./docs/02a-schema.md) | Table definitions, enums, relationships, indexes |
+| 02b | [Key Subsystems](./docs/02b-subsystems.md) | Connectors, dedup, scoring, queue, digest |
+| 02c | [Environment & Config](./docs/02c-config.md) | Env vars, config rules, local dev |
 | 03 | [Security & Access](./docs/03-security-and-access.md) | How do people sign in, who can do what, what breaks and what does it say? |
 | 04 | [Frontend Specification](./docs/04-frontend-specification.md) | What does it look like, and how do we talk to every third-party service? |
-| 05 | [Feature Ticket List](./docs/05-feature-ticket-list.md) | The build checklist — 87 tickets, one prompt each. |
+| 05 | [Feature Ticket List](./docs/05-feature-ticket-list.md) | The build checklist — 53 MUST tickets, one prompt each. |
+| 05a | [Phase 0 Tickets](./docs/05a-phase0.md) | Foundation: scaffold, schema, RLS, logger, CI |
+| 05b | [Phase 1 Tickets](./docs/05b-phase1.md) | Back-end: auth, onboarding, ingestion, scoring |
+| 05c | [Phase 2 Tickets](./docs/05c-phase2.md) | Front-end functional: feed, job detail, tracker, digests |
+| 05d | [Phase 3 Tickets](./docs/05d-phase3.md) | Design system & visual polish |
 | 06 | [Work Breakdown & Sequencing](./docs/06-work-breakdown.md) | Front-end vs back-end division: BE first, FE functional second, visual design last. |
+| 07 | [Session Log](./docs/07-session-log.md) | What happened in past sessions (not authority) |
 
 **Never** introduce a technology, folder, table, colour, or environment variable that isn't defined in those documents without updating them first.
 
@@ -34,7 +42,7 @@ These five documents are the source of truth. Read them in order; each one build
 | Database | Supabase — Postgres 17, pgvector, RLS, pg_cron, Storage |
 | Auth | Supabase Auth (magic link + Google OAuth) |
 | Scraping | Firecrawl (v2) + Greenhouse / Lever / Ashby / Remotive / Arbeitnow / USAJOBS / Adzuna |
-| AI | OpenAI — `text-embedding-3-small`, `gpt-4o-mini` |
+| AI | OpenRouter — `nvidia/nemotron-3-embed-1b:free` (2048-dim embeddings), `:free` chat model (rationale) |
 | Email · Payments · Analytics · Errors | Resend + React Email · Stripe · PostHog · Sentry |
 | Queue | Postgres `task_queue` table + Vercel Cron |
 | Hosting | Vercel |
@@ -70,7 +78,7 @@ pnpm dev                      # http://localhost:3000
 ## Repository layout
 
 ```
-docs/               the five specification documents (source of truth)
+docs/               the seven specification documents (source of truth)
 src/
   app/              App Router — routes only, no business logic
     (marketing)/    public landing, pricing, demo feed
