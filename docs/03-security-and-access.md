@@ -142,11 +142,15 @@ RLS is **enabled on every table** in the schema. Default posture: **deny all**, 
 -- true when the JWT's sub == this row's user_id
 create function auth.uid() returns uuid;          -- Supabase built-in
 
--- true when the JWT role claim = 'admin'
+-- true when the JWT's app_metadata.role = 'admin'
 -- Fixed 2026-10-03: the inner call is wrapped in (select ...). Do not unwrap it.
+-- Fixed 2026-10-05 (D15): the claim lives under app_metadata — sync_profile_role_to_jwt()
+-- writes it via auth.update_user(), which merges into raw_app_meta_data. The top-level
+-- JWT `role` claim is the Postgres role ('authenticated'), never 'admin', so the old
+-- body could never return true.
 create function is_admin() returns boolean
   language sql stable as $$
-  select coalesce((select auth.jwt()) ->> 'role', 'user') = 'admin'
+  select coalesce((select auth.jwt()) -> 'app_metadata' ->> 'role', 'user') = 'admin'
 $$;
 ```
 

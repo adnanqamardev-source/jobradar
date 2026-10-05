@@ -39,6 +39,7 @@ export default function LoginPage() {
             </div>
           </div>
           
+          <form action="/api/auth/google" method="POST">
           <button
             className="w-full h-10 px-4 border border-line-strong rounded-control bg-surface text-ink font-medium text-sm hover:bg-surface-2 transition-colors flex items-center justify-center gap-2"
           >
@@ -62,6 +63,7 @@ export default function LoginPage() {
             </svg>
             <span>Continue with Google</span>
           </button>
+          </form>
         </div>
       </div>
     </main>

@@ -940,6 +940,9 @@ and produce the next-phase plan with the available skills/MCP resources mapped o
 
 | Change | Evidence |
 |---|---|
+| BE-301 auth endpoints | `POST /api/auth/magic-link` (form → 303 `/login?sent=1`, JSON → `{ok:true}`, invalid email → 400/`?error=invalid_email`, never reveals account existence), `POST /api/auth/google` (303 to provider URL). Shared cookie-bound client extracted to `src/lib/auth/server-client.ts` and reused by `auth/callback/route.ts`. Login page Google button now posts to it. |
+| D15 shipped | `0004_fix_is_admin.sql` — `is_admin()` now reads `auth.jwt() -> 'app_metadata' ->> 'role'`; `docs/03` §4.1 updated; `pnpm db:reset` green with 0004 applied |
+| Gates | see below |
 | Docker engine re-verified running (was down since 2026-10-04) | `docker version` → Server `29.8.1` |
 | `supabase start` / `db reset` now pass end-to-end | `pnpm db:reset` → "Reset local database."; migrations 0001–0003 applied, seed ran |
 | `0001_init.sql` fixed for the Supabase local stack | it created `auth.users` unconditionally → SQLSTATE 42501. Now a `DO` block that only creates schema/table when absent (plain-Postgres path keeps working) |
@@ -947,15 +950,15 @@ and produce the next-phase plan with the available skills/MCP resources mapped o
 | ESLint policy widened visibly | `src/lib/db/user-client.ts` added to `SERVICE_ROLE_ALLOWED` with a comment explaining why the anon-key factory needs the direct import |
 | Gates | `pnpm typecheck` 0 · `pnpm lint` 0 · `pnpm test` 15 files / **259 passed** |
 
-## Finding to decide (D15, not fixed — needs your call)
+## D15 — RESOLVED 2026-10-05
 
-`is_admin()` (0001_init.sql line 625) reads `(select auth.jwt()) ->> 'role' = 'admin'`, but
-`sync_profile_role_to_jwt()` writes the role into `auth.users.raw_app_meta_data`, which surfaces in
-the JWT as `app_metadata.role`. The top-level JWT `role` claim is Postgres's *postgres-role*
-(`authenticated`/`service_role`), never `'admin'`. So **`is_admin()` can never return true** — every
-admin RLS policy is inert. The app-level `requireAdmin()` reads `app_metadata.role`, so it is
-consistent with the trigger; the SQL function is the one that is wrong. The fix is a new migration
-(`auth.jwt() -> 'app_metadata' ->> 'role'`), forward-only — tell me to write it and I will.
+`is_admin()` read `(select auth.jwt()) ->> 'role'`, but `sync_profile_role_to_jwt()` writes the
+role via `auth.update_user()`, which lands in the JWT as `app_metadata.role`. The top-level JWT
+`role` claim is the Postgres role (`authenticated`), never `'admin'` — so **`is_admin()` could
+never return true and every admin RLS policy was inert.** Fixed forward-only by
+`supabase/migrations/0004_fix_is_admin.sql` (`-> 'app_metadata' ->> 'role'`) and the doc
+(`docs/03` §4.1) updated to match. App-level `requireAdmin()` already read `app_metadata.role`,
+so both layers now agree. Applied to the local stack: `pnpm db:reset` green with 0004 included.
 
 ## Next Phase plan — Phase 1 back-end, in dependency order
 

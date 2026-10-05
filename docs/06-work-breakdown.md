@@ -129,7 +129,7 @@ No styling or UI components are built here. Work is completed when automated uni
 
 | ID | Title | Origin Ticket | Priority | Focus |
 |---|---|---|---|---|
-| **BE-301** | Magic Link & OAuth Auth Endpoints | `AUT-001`, `AUT-002` | MUST | Server-side auth handlers, PKCE callback, cookie manager (`httpOnly`). |
+| **BE-301** | Magic Link & OAuth Auth Endpoints | `AUT-001`, `AUT-002` | MUST | Server-side auth handlers, PKCE callback, cookie manager (`httpOnly`). **Completed 2026-10-05:** `POST /api/auth/magic-link`, `POST /api/auth/google`, PKCE callback, shared `createAuthServerClient()`. 5 route tests. OTP rate-limiting still with BE-303. |
 | **BE-302** | Session Helpers & Route Guards | `AUT-003`, `AUT-004` | MUST | `requireUser()`, `requireAdmin()`, admin bootstrap script via `ADMIN_EMAILS`. **Completed 2026-10-05:** `requireUser()`/`requireAdmin()` in `src/lib/auth/require-user.ts` (lazy env import, fails closed, role from `app_metadata.role`), `createUserClient()` in `src/lib/db/user-client.ts` (anon key + caller JWT). Tests in `tests/unit/auth-guard.test.ts` (8 cases). |
 | **BE-303** | OTP Verification Backend | `AUT-005` | SHOULD | 6-digit code verification endpoint with rate-limiting. |
 | **BE-304** | Profile & Preferences Mutations | `ONB-002..005`, `ONB-006` | MUST | Server Actions for updating titles, skills, logistics, dealbreakers. |
