@@ -60,116 +60,56 @@ Non-deterministic test behaviour — intermittent failures, order-dependent resu
 |---|---|---|
 | 2026-10-04 | `playwright.config.ts` baseURL bug (see Broken loops) caused all 18 e2e tests to fail intermittently depending on whether `PLAYWRIGHT_TEST_BASE_URL` was set. The tests themselves were fine; the config made them order-dependent on environment state. | When tests fail only in certain environments, suspect the config before the tests. A test that passes locally but fails in CI is not flaky — it is environment-dependent, and the fix belongs in the config, not the test. |
 
-## Hard rules (escalated from repeat offences — see AGENTS.md Rule 1)
+## Hard rules
+
+Escalated from repeat offences. Each rule is a check you run, not a sentiment. Incident
+detail lives in the tables above; here is only the rule and its trigger.
 
 ### Security
 
-- **Never print a credential — not to stdout, not to a transcript, not to "check" it.** A helper
-  script echoed the live service-role key into the conversation this session. The repo stayed
-  gitleaks-clean; the transcript did not. Reference a value by its length and prefix only, and
-  treat any log/CI/chat exposure as a leak: rotate per `docs/03` §4.4 and record the date.
-- **A bare identifier is not a secret.** Match credential *values* everywhere. Match *names*
-  only in the client bundle, where a name is itself the violation. The server bundle is
-  supposed to contain the env contract, which names every variable.
-- **`process.env.X!` anywhere in `src/` is a latent opaque 500.** The `!` asserts a value nothing
-  checked, and the SDK then fails with copy naming none of the five variables. Import `env` from
-  `@/lib/env` so Zod reports every missing variable by name at once.
-- **CRON_SECRET must be ≥ 32 chars** (Zod `min(32)`, verified constant-time). The committed
-  placeholder `your_cron_secret_here` (19 chars) made `import { env }` throw at module load.
-  Generate with `crypto.randomBytes(32)`, never hand-type.
-- **A security gate must be proven in both directions.** Plant a fake secret (must fail) and
-  realistic noise (must pass). Neither direction alone proves the gate works.
+- **Secrets are matched by value, never by name — except in the client bundle**, where a
+  bare name is itself the leak (the server bundle legitimately names every env var).
+  Test the scanner both ways: planted secret fails, minified noise with `supabase`/`sk-` passes.
+- **Never print a credential to stdout, a transcript, or a log.** Refer to a value by its
+  length and prefix. Exposure outside the repo counts as a leak: rotate (`docs/03` §4.4),
+  record the date.
+- **`CRON_SECRET` ≥ 32 chars**, generated (`crypto.randomBytes(32)`), never typed by hand —
+  a 19-char placeholder made `import { env }` throw at load.
+- **No `process.env.X!` in `src/`.** The `!` turns a config error into an opaque runtime 500;
+  import `env` from `@/lib/env` so Zod names every missing variable.
+- **No service-role fallback.** A "temporary" service key in a user-scoped action silently
+  disables RLS while queries keep returning rows — `src/lib/db/user-client.ts` throws instead;
+  don't route around it.
 
 ### Process
 
-- **Do not start Phase 2 work.** Phase 2 is gated on `supabase db reset` succeeding (P0→P1) and
-  BE tests green (P1→P2). With zero migrations and empty `src/types/`, neither gate can pass.
-  Being asked to "plan and implement Phase 2" is not authorisation to invent FE components.
-- **Never hand-write a stub to make a gate look passed.** No placeholder `SupabaseClient`, no
-  mock `env`, no example migration. A green check with no output behind it is worthless.
-- **`"latest"` in `package.json` is a bug, not a default.** 42 dependencies were unpinned,
-  making CI builds non-reproducible. Pin exact versions; re-pin deliberately, never implicitly.
-- **Verify env against the real API, not just the schema.** The schema accepted both model ids;
-  only a live call proved 2048 dims, the `:free` price, and the 429 behaviour. Schema-green is
-  not integration-green.
-- **Every doc'd literal value needs a test.** `EMAIL_FROM`'s documented example was rejected by
-  its own schema for two sessions. Put doc examples in tests.
-- **A CI workflow is not done until it has run green.** Local gates do not exercise YAML. Push,
-  read the run, *then* write the completion claim into `docs/06`.
-- **`""` is present.** `??` and Zod `.optional()` both treat an empty string as a real value.
-  Anything from a `.env` file or a GitHub `vars:` expression needs a `firstNonEmpty()` helper.
-  This has now broken this repo twice.
-- **Never round-trip a repo file through PowerShell `Get-Content`/`Set-Content`.** It rewrote a
-  doc and destroyed its UTF-8 box-drawing characters. Use the `edit` tool, and check encoding by
-  counting U+FFFD at the byte level — not by whether the console renders the glyphs.
-- **When reordering a table of regex literals, reverse it programmatically, never by retyping.**
-  Hand-copying nine regexes from one module into another is how `|1[- ]2\s*years?` — which exists
-  only in `normalize.ts` — ended up in an `oldString` for `extract-rules.ts` and made three correct
-  edits fail with "could not find oldString". The symptom looked like a tool bug; it was my
-  transcription. Reverse/rewrite with a script that asserts the expected key order first.
-- **A service-role fallback silently disables RLS.** Handing a user-scoped action the service key
-  "temporarily" makes every `*_own` policy inert while the queries still return rows — invisible
-  in tests *and* in production. `src/lib/db/user-client.ts` throws instead, and
-  `tests/unit/auth-guard.test.ts` pins the refusal, including that a token never reaches an error
-  message. Same family as "never hand-write a stub": a guard that cannot fail converts a visible
-  gap into an invisible hole.
-- **Never round-trip a repo file through PowerShell `Get-Content`/`Set-Content`.** It rewrote a
-  doc and destroyed its UTF-8 box-drawing characters. Use the `edit` tool, and check encoding by
-  counting U+FFFD at the byte level — not by whether the console renders the glyphs.
-- **Count, don't estimate, in docs.** A ticket-count table said "+7 / 60 tickets" for 5 added
-  MUST tickets; `tests/unit/doc-drift.test.ts` counted the `**Priority:**` markers and failed.
-  When a doc states a number, the number must be derived or asserted, never typed from memory.
-- **Two agents in one working tree will silently destroy each other's work.** Mid-task, a
-  file I had just created (`src/lib/storage/resume-file.ts`) vanished and an edited tracked file
-  (`extract-rules.ts`) reverted to HEAD, with no stash and nothing in the reflog. Cause: a second
-  session working the same directory (it left Playwright probes for `/login`, `/pricing`, `/demo`
-  — Phase 2 UI work). Reverted edits leave **no trace**, so nothing warns you.
-  **Check `git status` for files you did not create before and after any write**, and commit early
-  and often rather than accumulating a long uncommitted stretch. If a change you watched succeed
-  has disappeared, suspect this before suspecting the tool.
-- **A first-match-wins lookup table needs its patterns to be disjoint.** `SENIORITY_KEYWORDS`
-  listed `lead|principal|staff` inside `senior`, so those three branches were unreachable dead
-  code — and the suite stayed green because no fixture used "Staff Engineer". Two rules: every
-  pattern describes only its own level, and test the *inputs that break it*, not just the happy
-  path. Also: don't mix a stated fact (a job title) with a fallback heuristic (years of
-  experience) in one ordered table — the heuristic then wins by position.
-- **`\b` cannot terminate a token that ends in a non-word character.** `"C++"`/`"C#"` are
-  unreachable behind `\bC\+\+\b`; use a negative lookahead `(?!\w)`, which still refuses "Go" in
-  "Going". Whenever a list of literals is matched with `\b`, check whether any entry ends in
-  punctuation.
-- **OpenCode V2 accepts `instructions` in config but never loads it.** The schema takes it, the file
-  parses, and it does nothing — files, globs and URLs are all unresolved. `AGENTS.md` is the only
-  instruction source that works, and only `AGENTS.md` (not `CLAUDE.md`). A session asking for
-  "reload my rules each iteration" means a **command** with a `template`, not `instructions`.
-  Verified against https://opencode.ai/v2/docs/instructions, not from memory.
-- **Setting a custom agent's `system` REPLACES the provider base system prompt.** It does not
-  append. So do not reach for a custom `default_agent` to inject a few lines of project discipline —
-  that trades away the model's own coding instructions. Use a command. Also `default_agent` does not
-  change the agent on an already-open session.
-- **Never write a timing claim you have not executed.** "Fails at build", "fails at boot" —
-  strip the inputs and run it. And **move `.env.local` aside** to do so: both `next build` and
-  `next start` auto-load it, so clearing `process.env` silently tests nothing.
-- **CI needs placeholder env values, and they need a test.** Any module that imports
-  `@/lib/env` makes the build fail without a schema-valid environment. CI passes fakes in
-  workflow-level `env`, asserted by `tests/unit/ci-placeholders.test.ts` — CI cannot test
-  its own env, so a unit test is the only oracle.
-- **Config gates must run in `pnpm test`, not just in your shell.** A duplicated YAML key made
-  GitHub reject the whole workflow in 0s with no logs, and `yaml.safe_load` passed it anyway.
-  Anything that can invalidate a push needs an in-suite check, proven by feeding it a known-bad
-  input before you trust its pass.
-- **Gates run in order `typecheck → lint → test`, and none substitutes for another.** A new test
-  file passed vitest 105/105 and still failed `tsc` (no vitest globals in this repo) and ESLint
-  (`Array<T>`, implicit `any`, `String()` on an object). Green tests say nothing about types or
-  lint; the three check disjoint properties.
-- **A workflow referencing secrets you have never created is not configured.** `deploy.yml` died
-  on `Input required and not supplied: vercel-token`, and its preview job was gated on
-  `pull_request` inside a `push`-only trigger — dead even with the token. Read every step's
-  `with:` inputs and `if:` condition against the trigger block before committing, then read the
-  first real run. Prefer the platform's native integration over a third-party deploy action.
+- **Schema-green is not integration-green.** Before relying on an API assumption (price,
+  dimensions, 429 behaviour), make the live call once.
+- **Docs' literals are tests' inputs.** If a doc shows an example value, the schema/code
+  must accept it — assert it in a test, don't re-read it.
+- **`""` is a value.** `??` and Zod `.optional()` both accept it; `.env` and CI `vars:`
+  produce it for unset. Normalise with `firstNonEmpty()` before defaulting.
+- **A YAML/CI claim is data, read from the run.** `conclusion` via `--json`, not the glyph.
+  A locally-"verified" workflow is unverified: duplicate keys, unset secrets, dead `if:`/trigger
+  combos only surface in the real run — so config gates live in `pnpm test`, proven by feeding
+  a known-bad input to a real file.
+- **Benchmark the claim against a genuinely-absent input.** To test an env-dependent failure,
+  move `.env.local` aside; clearing `process.env` proves nothing because Next auto-loads it.
+- **Pin every version.** One source of truth per setting (`env.NODE_VERSION`, asserted in
+  `tests/unit/workflow-yaml.test.ts`); `"latest"` in package.json is a bug.
+- **Guards must be able to fail.** A checker that can't reject its own file is decoration —
+  prove it rejects known-bad *and* accepts the real target, always both directions.
+- **Tables and regexes are transcribed programmatically.** Never hand-copy literals between
+  files or reverse them by typing; script it and assert the order.
+- **`\b` stops at word characters.** A token ending in punctuation (`C++`, `C#`) needs a
+  negative lookahead; when any literal ends in punctuation, audit every `\b` guard.
+- **Two sessions, one tree = silent loss.** Check `git status` for files you didn't create
+  before and after writes; commit early. Never edit through PowerShell `Get-Content`/`Set-Content`
+  round-trips (UTF-8-lossy) — use the edit tool.
+- **Doc numbers are counted, not estimated.** Any number in docs is derived or asserted
+  (`tests/unit/doc-drift.test.ts`), never typed from memory.
 
 ### Config
 
-- **One source of truth per setting.** Node was pinned in `.nvmrc`, `ci.yml`, `package.json`
-  `engines`, and the Vercel dashboard — four places to move by hand, with drift producing no
-  signal until prod disagrees with CI. Workflow-level `env.NODE_VERSION`, asserted by
-  `tests/unit/workflow-yaml.test.ts`.
+- **One source of truth per setting.** A value edited in N places is wrong in at least one;
+  give it one owner and assert the rest derive from it.

@@ -68,3 +68,23 @@ Verify in that order. Claim done only with pasted output.
 | Rule 4 | Finish with evidence, or say you did not finish |
 
 **Tooling notes** (FND-001, settled): env loading via Node's `--env-file=.env.local` (no `dotenv`); vitest config is `vitest.config.mts` with top-level `fileParallelism: false`; ESLint flat config only; `next-env.d.ts` is ignored.
+
+## Worktrees (agent isolation)
+
+Two sessions in one tree silently destroy each other's work. Worktrees live in `.worktrees/` (gitignored). **A worktree is a bare checkout** — `node_modules`, `.env.local`, `tools/gitleaks`, `.next` are all gitignored, so after `git worktree add`: `pnpm install --frozen-lockfile`, copy `.env.local` from the main tree (never print it), re-run `pnpm secret:install` if the gitleaks gates are needed, then `typecheck → lint → test` inside it before trusting it. Commit early — a revert is invisible.
+
+## Commands beyond the gates
+
+```bash
+pnpm vitest run tests/unit/<file>.test.ts   # one file
+pnpm db:reset                               # supabase db reset (Phase 1 gate)
+pnpm secret:scan                            # gitleaks, staged (pre-commit hook runs it)
+pnpm secret:scan:bundle                     # client-bundle credential scanner (needs `pnpm build` first)
+pnpm queue:drain                            # one-off worker drain
+```
+
+`next build`/`next dev` fetch Google Fonts via `next/font/google` — a build with no network fails.
+
+## notes.md shape
+
+Two layers: incident tables (one row per mistake, dated) and **Hard rules**, which are checks — trigger → the command/test to run → pointer. When adding, follow that shape; don't add standalone "never X" policy that AGENTS.md already owns.
