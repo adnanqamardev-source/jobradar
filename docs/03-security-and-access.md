@@ -196,6 +196,7 @@ Rule column is written as `(select auth.uid())` â€” see Â§4.1.
 | `profiles` | admin | âœ… | â›” | â›” | â›” | `is_admin()` â€” lookup only, and only non-sensitive columns via a restricted view. |
 | `profile_skills` | owner | âœ… | âœ… | âœ… | âœ… | `exists(select 1 from profiles where id = profile_id and auth.uid() = id)` |
 | `resume_versions` | owner | âœ… | âœ… | âœ… | âœ… | same ownership predicate; `storage_path` never returned as a public URL |
+| `resumes` | owner | ✅ | ✅ | ✅ | ✅ | `auth.uid() = user_id` — **BE-314, added 2026-10-04.** `storage.objects` policies are scoped by `(storage.foldername(name))[1] = auth.uid()::text`. An uploaded résumé is the most sensitive user data in the system — see §4.2a. |
 | `saved_searches` | owner | âœ… | âœ… | âœ… | âœ… | ownership predicate + insert-time quota check |
 | `job_scores` | owner | âœ… | â›” | â›” | â›” | `auth.uid() = user_id`. **Write path is service-role only** (queue scorer) â€” users can't forge their own scores. |
 | `applications` | owner | âœ… | âœ… | âœ… | âœ… | `auth.uid() = user_id`. `job_snapshot` is client-supplied-on-apply but validated by Zod. |
@@ -217,6 +218,27 @@ Rule column is written as `(select auth.uid())` â€” see Â§4.1.
 | `audit_logs` | admin | âœ… | â›” | â›” | â›” | append-only, service key writes |
 | `digests` | owner | âœ… | â›” | â›” | â›” | user can see "we skipped yesterday, nothing new" |
 | `job_events` | owner | âœ… | âœ… | â›” | â›” | implicit feedback rows |
+
+### 4.2a Uploaded résumé files — why this table gets extra scrutiny
+
+**Added 2026-10-04 (BE-314).** A résumé is the most sensitive thing a user will ever hand us:
+full name, home address, phone, employment history, and often a photo and signature. It also
+arrives as a file the user chose, so it is attacker-controlled input by definition.
+
+| Rule | Why |
+|---|---|
+| **Private bucket only** | No public URL, ever. Access is a short-lived signed URL (1h) minted per request, after RLS has confirmed ownership. |
+| **Path is user-scoped** | Files live at `{user_id}/{resume_id}.{ext}`, so a storage policy can authorise on the first path segment. A flat namespace cannot be authorised that way. |
+| **`force row level security`** | Without it, the table owner bypasses the policies. §4.1a explains why that matters even though only the server writes here. |
+| **Never fall back to the service key** | The service role bypasses RLS. A user-scoped action that "temporarily" uses it makes every policy above inert while still returning rows — the failure is invisible. `src/lib/db/user-client.ts` therefore *throws* rather than degrade, and `tests/unit/auth-guard.test.ts` pins that refusal. |
+| **Type and size validated server-side** | PDF/DOCX only, ≤ 10 MB. The extension and the MIME type are both attacker-supplied, so neither is trusted alone. |
+| **Delete cascades** | The `user_id` FK is `on delete cascade`, so account deletion removes the row; the storage objects are swept by the account-deletion worker (BE-313). |
+| **No résumé content in logs** | `logger` redacts credentials, and résumé text is not a field any log call passes. `audit_logs.meta` is explicitly "no secrets, no résumé content" (§5.8). |
+
+**What is deliberately not built yet.** Account export and deletion are the paths that must
+sweep storage objects; until BE-313 lands, deleting the `resumes` row leaves the file in the
+bucket. Recorded here rather than left implicit: an orphaned private file is low-risk (it is
+unreachable without a signed URL) but it is still user data we were asked to remove.
 
 ### 4.3 Worked example â€” why this holds
 

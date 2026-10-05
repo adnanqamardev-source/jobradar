@@ -42,6 +42,7 @@ Repeating the same mistake, or shipping something broken while claiming it worke
 | 2026-10-04 | Node was pinned in **four independent places** — `.nvmrc`, `ci.yml`, `package.json` `engines`, and the Vercel dashboard — all of which had to be moved 20 → 24 by hand. Nothing failed, which is exactly the problem: the next drift produces a "works in CI, fails in prod" bug with no signal that the versions ever diverged. | One source of truth per setting. CI reads `env.NODE_VERSION` at workflow level and every `setup-node` reads it (`tests/unit/workflow-yaml.test.ts` asserts no job hardcodes a version). A value that must be edited in N places has already been wrong in at least one of them. |
 | 2026-10-04 | Ran `pnpm test` first on a brand-new file: **105 passed**. Then ran the documented order and got `typecheck exit=2` and `lint exit=1` on that same file — missing `import { describe, expect, it } from "vitest"` (there are no vitest globals in this repo's tsconfig), `Array<T>` instead of `T[]`, an implicit `any`, and a `String(x)` on an object. Green tests had told me nothing about either gate. | **Run gates in the documented order, `typecheck → lint → test`, and never substitute one for another** — they check disjoint properties, and `vitest` resolves types and ignores ESLint rules that `tsc` and `eslint` enforce. A new test file is the single most likely file in the repo to fail the other two gates, because it uses APIs the compiler does not see as ambient. |
 | 2026-10-04 | Wrote a duplicate-key-rejecting YAML parser to catch a bug that had shipped — and its first run failed on **valid** YAML, because it treated `needs: [lint, typecheck, test]` as the literal string `"[lint, typecheck, test]"`. The ordering assertion then compared a string against an array. A checker that rejects the file it is supposed to protect is no better than one that accepts everything. | A checker must cover the syntax the target file **actually uses** — inspect it before writing the parser, and when an assertion fails, suspect the parser first. Then prove it both ways: feed it the known-bad input (must throw) *and* the real file (must pass). I only had the second until the test failed. |
+| 2026-10-04 | Fixed a one-space misalignment in the `docs/02a` ER diagram with `Set-Content`, which silently **rewrote the whole file** and destroyed every UTF-8 box-drawing character — 86 U+FFFD replacement chars, `─` gone from all 10 diagram lines. PowerShell 5.1's `Get-Content`/`Set-Content` round-trip is not UTF-8-safe. The `read` tool showed the damage, but I nearly dismissed it as console mojibake, because these docs display as mojibake even when healthy. | **Never round-trip a repo file through `Get-Content`/`Set-Content`.** Use the `edit` tool for text edits. Verify encoding by counting U+FFFD at the byte level — *not* by whether the console renders the glyphs, which it never does: `[System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($f))` then `([regex]::Matches($t,[char]0xFFFD)).Count`. Recovery is `git checkout -- <file>`, which is why the edit should be small and re-appliable. |
 
 ## Wrong-file waste
 
@@ -98,6 +99,27 @@ Non-deterministic test behaviour — intermittent failures, order-dependent resu
 - **`""` is present.** `??` and Zod `.optional()` both treat an empty string as a real value.
   Anything from a `.env` file or a GitHub `vars:` expression needs a `firstNonEmpty()` helper.
   This has now broken this repo twice.
+- **A service-role fallback silently disables RLS.** Handing a user-scoped action the service key
+  "temporarily" makes every `*_own` policy inert while the queries still return rows — invisible
+  in tests *and* in production. `src/lib/db/user-client.ts` throws instead, and
+  `tests/unit/auth-guard.test.ts` pins the refusal, including that a token never reaches an error
+  message. Same family as "never hand-write a stub": a guard that cannot fail converts a visible
+  gap into an invisible hole.
+- **Never round-trip a repo file through PowerShell `Get-Content`/`Set-Content`.** It rewrote a
+  doc and destroyed its UTF-8 box-drawing characters. Use the `edit` tool, and check encoding by
+  counting U+FFFD at the byte level — not by whether the console renders the glyphs.
+- **Count, don't estimate, in docs.** A ticket-count table said "+7 / 60 tickets" for 5 added
+  MUST tickets; `tests/unit/doc-drift.test.ts` counted the `**Priority:**` markers and failed.
+  When a doc states a number, the number must be derived or asserted, never typed from memory.
+- **OpenCode V2 accepts `instructions` in config but never loads it.** The schema takes it, the file
+  parses, and it does nothing — files, globs and URLs are all unresolved. `AGENTS.md` is the only
+  instruction source that works, and only `AGENTS.md` (not `CLAUDE.md`). A session asking for
+  "reload my rules each iteration" means a **command** with a `template`, not `instructions`.
+  Verified against https://opencode.ai/v2/docs/instructions, not from memory.
+- **Setting a custom agent's `system` REPLACES the provider base system prompt.** It does not
+  append. So do not reach for a custom `default_agent` to inject a few lines of project discipline —
+  that trades away the model's own coding instructions. Use a command. Also `default_agent` does not
+  change the agent on an already-open session.
 - **Never write a timing claim you have not executed.** "Fails at build", "fails at boot" —
   strip the inputs and run it. And **move `.env.local` aside** to do so: both `next build` and
   `next start` auto-load it, so clearing `process.env` silently tests nothing.

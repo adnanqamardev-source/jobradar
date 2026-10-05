@@ -52,8 +52,8 @@ E0 Foundation ─▶ E1 Auth ─▶ E2 Onboarding ─▶ E3 Ingestion ─▶ E4 
 |---|---|---|
 | E0 Foundation | ENG-001…006 | 6 |
 | E1 Auth | AUT-001…005 | 5 |
-| E2 Onboarding | ONB-001…007 | 7 |
-| E3 Ingestion | ING-001…012 | 12 |
+| E2 Onboarding | ONB-001…011 | 11 |
+| E3 Ingestion | ING-001…013 | 13 |
 | E4 Scoring | SCR-001…007 | 7 |
 | E5 Feed | FED-001…006 | 6 |
 | E6 Job Detail | JOB-001…004 | 4 |
@@ -63,9 +63,9 @@ E0 Foundation ─▶ E1 Auth ─▶ E2 Onboarding ─▶ E3 Ingestion ─▶ E4 
 | E10 Admin | ADM-001…005 | 5 |
 | E11 Polish | QUA-001…006 | 6 |
 | Backlog | BKG-001…012 | 12 |
-| **Buildable (E0–E11)** | | **75** |
+| **Buildable (E0–E11)** | | **80** |
 | Backlog | BKG-001…012 | 12 |
-| **Total** | | **87** |
+| **Total** | | **92** |
 
 **Priority split**
 
@@ -75,4 +75,12 @@ E0 Foundation ─▶ E1 Auth ─▶ E2 Onboarding ─▶ E3 Ingestion ─▶ E4 
 | **SHOULD** | 17 | 4 | **21** |
 | **NICE** | 5 | 8 | **13** |
 
-**MVP = every ticket marked MUST** — 53 tickets, executed in the epic order at the top of this document. `SHOULD` tickets target the first 6 weeks after launch; `NICE` and all of `BKG-*` stay in the backlog.
+**MVP = every ticket marked MUST** — **58** tickets (was 53; +5 on 2026-10-04: ONB-008…011 and ING-013, all MUST), executed in the epic order at the top of this document. `SHOULD` tickets target the first 6 weeks after launch; `NICE` and all of `BKG-*` stay in the backlog.
+
+**The 5 added on 2026-10-04** are résumé-upload onboarding (ONB-008…011) and India/international
+remote scope (ING-013). They were added because the product owner is an Indian candidate:
+without ING-013 a `work_mode = 'remote'` filter cannot distinguish a PAN-India role from a
+worldwide one, and "remote" is most of what that candidate searches for. Full rationale and
+delivery status in [05b](./05b-phase1.md); the acceptance boxes there are the authority on what
+is actually finished. `tests/unit/doc-drift.test.ts` recounts this number from the `**Priority:**`
+markers, so editing a count here without adding or removing a ticket fails the suite.

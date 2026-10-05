@@ -27,6 +27,7 @@ create every one of them.
 ```
 auth.users ──1:1── profiles ──1:N── saved_searches
                     │  │  └─1:N── resume_versions
+                    │  ├─1:N── resumes   (uploaded → parsed → onboarding prefill)
                     │  └─1:N── applications ──N:1── jobs ──N:1── sources
                     │             │                    │  └─N:M── job_skills ── skills
                     │             └─1:N── application_events        ▲
@@ -52,7 +53,14 @@ create type run_status       as enum ('running','success','partial','failed');
 create type source_kind      as enum ('api_greenhouse','api_lever','api_ashby','api_remotive','api_arbeitnow','api_usajobs','api_adzuna','firecrawl_scrape','firecrawl_search');
 create type plan_tier        as enum ('free','pro');
 create type digest_channel   as enum ('email','slack');
+create type remote_scope     as enum ('india','global','unknown');
 ```
+
+**`remote_scope` — added 2026-10-04 (ING-013 / BE-317).** `work_mode` answers *remote or not*;
+this answers *which* remote, which is a different question. `"Remote - India"` and
+`"Remote - Worldwide"` are both `work_mode = 'remote'` and are not interchangeable for an Indian
+candidate, so `work_mode` alone cannot filter between them. `unknown` is the default because a
+source that never says "India" or "worldwide" is the common case, not an error.
 
 ### 5.3 Core account tables
 
@@ -123,6 +131,34 @@ Indexes: `gin(target_titles)`, `gin(blocked_companies)`, `gin(excluded_keywords)
 | `is_default` | `boolean default false` |
 | `size_bytes` | `integer` |
 | `created_at` | `timestamptz` |
+
+**`resumes`** *(ONB-008 / BE-314, migration `0002_resumes.sql` — added 2026-10-04)*
+
+The **uploaded résumé used to prefill onboarding**, which is a different thing from
+`resume_versions` above: one file per user, parsed into a profile, deleted with the account.
+`resume_versions` is the multi-version library for attaching a CV to an application (BKG-001).
+Separate tables because the lifecycles differ — a user may parse one résumé to fill in their
+profile and still keep five versions to attach to applications.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` PK | |
+| `user_id` | `uuid` FK → profiles cascade | owner; the subject of every RLS policy |
+| `file_path` | `text` not null | `{user_id}/{resume_id}.{pdf\|docx}` in the private `resumes` bucket |
+| `mime_type` | `text` | `CHECK` limited to PDF + DOCX |
+| `size_bytes` | `integer` | `CHECK > 0`; the app rejects > 10 MB |
+| `parsed_json` | `jsonb` | the `ExtractedProfile` — see §5.11 |
+| `status` | `text` | `CHECK in ('pending','processing','completed','failed')` |
+| `confidence` | `numeric(3,2)` | 0–1 extraction quality |
+| `extracted_at` | `timestamptz` | |
+| `error` | `text` | why parsing failed |
+| `created_at` / `updated_at` | `timestamptz` | `updated_at` maintained by trigger |
+
+Indexes: `user_id` (which also discharges the §5.10 FK obligation), `status`, `created_at desc`.
+
+**Why `status` is `text` + CHECK here rather than an enum**, when §5.2 uses enums throughout: an
+enum would add a fifth member to an existing family for the use of one table, and this state
+machine is still settling. Promote it when a second table needs the same five states.
 
 **`subscriptions`** *(S)* — 1:1 with profiles.
 
@@ -206,6 +242,7 @@ Indexes: `gin(target_titles)`, `gin(blocked_companies)`, `gin(excluded_keywords)
 | `location_raw` | `text` | as published |
 | `city` / `region` / `country_code` | `text` | parsed |
 | `work_mode` | `work_mode` default `'unknown'` | |
+| `remote_scope` | `remote_scope` default `'unknown'` | **ING-013** — `india` / `global` / `unknown`; see §5.2 |
 | `salary_min` / `salary_max` | `numeric(12,0)` | NULL when undisclosed |
 | `salary_currency` | `char(3)` | |
 | `salary_period` | `text` | |
@@ -225,7 +262,14 @@ Indexes: `gin(target_titles)`, `gin(blocked_companies)`, `gin(excluded_keywords)
 | `raw` | `jsonb` | untouched source payload, debugging |
 | `created_at` / `updated_at` | `timestamptz` | |
 
-Indexes: **unique** on `dedupe_hash`; `gin(status, last_seen_at)`; btree `(status, posted_at desc)`; `gin(skills)`; `gin(to_tsvector('english', title || ' ' || coalesce(description_text,'')))` for keyword search; trigram on `title_norm` + `company_domain` for fuzzy dedupe.
+Indexes: **unique** on `dedupe_hash`; `gin(status, last_seen_at)`; btree `(status, posted_at desc)`; `gin(skills)`; `gin(to_tsvector('english', title || ' ' || coalesce(description_text,'')))` for keyword search; trigram on `title_norm` + `company_domain` for fuzzy dedupe; partial `(work_mode, remote_scope) where status = 'active'` for the country/scope feed filter (ING-013).
+
+**The `remote_scope` index leads with `work_mode`, deliberately.** An index on `remote_scope`
+alone would not narrow anything, because the overwhelming majority of rows are already
+`work_mode = 'remote'` — so a query filtering `remote_scope = 'india'` would read most of the
+table either way. The real query shape is
+`where work_mode = 'remote' and remote_scope = 'india' and status = 'active'`, and that is what
+the composite index is ordered for.
 
 **Similarity index on `embedding` — read this before writing the migration.**
 
@@ -417,14 +461,36 @@ select * from task_queue
 ```sql
 -- Feed read path (single query for the dashboard)
 -- Fixed 2026-10-03 — the original version had three separate problems. See the note below.
+-- 0003 added remote_scope; see 0003's comment for why that needed DROP + CREATE.
 create view v_ranked_jobs with (security_invoker = true) as
-select j.id, j.title, j.company_name, j.location, j.work_mode, j.employment_type,
-       j.seniority, j.posted_at, j.last_seen_at, j.status, j.skills,
-       s.final_score, s.breakdown, s.explanation, s.scored_at
+select
+  j.id,
+  j.title,
+  j.company_name,
+  j.location_raw as location,
+  j.work_mode,
+  j.remote_scope,
+  j.employment_type,
+  j.seniority,
+  j.posted_at,
+  j.last_seen_at,
+  j.status,
+  j.skills,
+  s.final_score,
+  s.breakdown,
+  s.explanation,
+  s.scored_at
   from jobs j
   left join job_scores s on s.job_id = j.id
  where j.status = 'active';
 ```
+
+**A new column on `jobs` does not reach this view automatically, and that is the point.** The
+view lists its columns one by one on purpose — `select j.*` was one of the three bugs fixed on
+2026-10-03 (it drags `raw` and a 2048-float `embedding` into every feed query). The cost of that
+fix is that adding a column is now a two-step change: the column *and* the view. Miss the second
+step and the UI offers a country filter that silently returns nothing, which is why
+`tests/unit/migration-drift.test.ts` asserts the view exposes `remote_scope`.
 
 **Why this view was rewritten — three bugs, all fixed by the version above.**
 
@@ -490,9 +556,48 @@ lists those sections give. FND-002 must create an index for every one.
 | `resume_versions` | `user_id` | `profiles` | **RLS** — owner lookup |
 | `profile_skills` | `skill_id` | `skills` | skill vocabulary join |
 | `job_skills` | `skill_id` | `skills` | skill vocabulary join |
+| `resumes` | `user_id` | `profiles` | **RLS** — owner lookup (ONB-008, added 2026-10-04) |
 
-The two marked **RLS** are the ones that matter most: they sit directly inside a
+**`jobs.remote_scope` is deliberately absent from this table.** It is an enum column, not a
+foreign key, so §5.10 does not apply. Noted explicitly because this section is the checklist
+people scan when hunting for a missing index.
+
+The rows marked **RLS** are the ones that matter most: they sit directly inside a
 row-level-security predicate, so a missing index there makes every policy check slow on
-every row.
+every row. **Three, not two** — `resumes.user_id` joined them on 2026-10-04.
+
+### 5.11 `ExtractedProfile` — the résumé parse result
+
+**Added 2026-10-04 (ONB-009 / BE-315).** This is the shape stored in `resumes.parsed_json`,
+defined once in `src/types/resume.ts` as a Zod schema with the TypeScript type derived from it.
+It is the contract between the parser and the onboarding wizard.
+
+| Field | Type | Notes |
+|---|---|---|
+| `fullName` / `email` / `phone` | `string \| null` | `email` is `.email()`-validated |
+| `location.city` / `.region` / `.countryCode` | `string \| null` | `countryCode` is ISO 3166-1 alpha-2 |
+| `titles` | `string[]` | max 10 after mapping |
+| `seniority` | `seniority \| null` | §5.2 vocabulary, never a free string |
+| `yearsExperience` | `number \| null` | 0–60 |
+| `skills` | `string[]` | canonical names, max 30 after mapping |
+| `workModes` | `("remote"\|"hybrid"\|"onsite")[]` | preference, not a job fact |
+| `minSalary` / `salaryCurrency` / `salaryPeriod` | | Indian grouping and `L`/`Cr` notation resolved to an absolute figure |
+| `education` | `{degree, institution, year}[]` | `institution` is best-effort |
+| `summary` | `string \| null` | truncated |
+| `confidence` | `number` 0–1 | weighted across the fields above |
+| `needsReview` | `boolean` | `true` when `confidence < 0.6`, or email/titles missing |
+
+**`needsReview` is a safety property, not a nicety.** The extracted values prefill the onboarding
+wizard, so a wrong guess silently becomes a scoring input and therefore a wrong ranked feed.
+Below the threshold the wizard must show the fields for confirmation rather than applying them.
+
+**Two rules the parser holds itself to:**
+
+1. **Rule-based extraction is the default and the only synchronous path.** It is deterministic and
+   offline, so the same résumé always yields the same profile.
+2. **The LLM fallback is opt-in and must run in a queue worker, never in a request.** [02 §1.2](./02-technical-architecture.md)
+   forbids an HTTP request blocking on a third party, and the free OpenRouter tier returns 429
+   under load (`notes.md`). `extractProfile()` therefore takes `allowLlmFallback`, defaulting to
+   `false`, and only BE-108's `parse_resume` task sets it.
 
 ---

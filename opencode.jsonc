@@ -1,0 +1,71 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // ---------------------------------------------------------------------------
+  // JobRadar — local OpenCode configuration
+  //
+  // WHY THIS FILE IS ALMOST EMPTY
+  //
+  // OpenCode already auto-loads ./AGENTS.md (project instructions), and it live-updates:
+  // edit the file and the next model request picks up the change. So there is no need to
+  // list it here — and in fact you CANNOT. The `instructions` array is accepted by the
+  // config schema but V2 never resolves its files, globs, or URLs, so anything put in it
+  // is silently inert. AGENTS.md is the only instruction source that works.
+  //
+  // The gap this file fills: AGENTS.md says "Read notes.md before the first tool call",
+  // but OpenCode has no idea notes.md exists. Only AGENTS.md is auto-loaded, so the
+  // single most load-bearing rule in this repo depends on the model remembering to obey
+  // an instruction that describes a file it was never told to open.
+  //
+  // `/rules` closes that gap on demand. See the command below.
+  // ---------------------------------------------------------------------------
+
+  "commands": {
+    // -------------------------------------------------------------------------
+    // /rules — re-read the governing docs, THEN work the task.
+    //
+    // Invoke this at the start of each chunk of work ("each iteration"). It is a
+    // prompt template, not a hook: OpenCode submits it as a user message, so it
+    // cannot fire on its own. Running it again after a compaction or a long gap is
+    // the point — compaction can drop instruction entries from history, and a
+    // re-read puts them back as ordinary model-visible tool output.
+    //
+    // Deliberately NOT a shell block (`!`cat AGENTS.md``). Two reasons:
+    //   1. Shell blocks run outside the agent's tool-permission flow, so the read
+    //      would bypass the approval prompts AGENTS.md depends on.
+    //   2. notes.md is ~25 KB. Inlined on every invocation it is ~7k tokens per
+    //      iteration, forever. Letting the agent read it deliberately costs the same
+    //      once but stays skippable when the task obviously does not need it.
+    //
+    // The template keeps the agent honest by making it state the constraints back
+    // before touching anything — a recited constraint is far harder to drift from
+    // than one that was merely read.
+    // -------------------------------------------------------------------------
+    "rules": {
+      "description": "Read AGENTS.md + notes.md first, restate the binding rules, then do the task",
+      "template": "Before anything else, in this order, and do not skip step 1 even if you remember the contents from earlier in this session:\n\n1. Read `AGENTS.md` at the repo root.\n2. Read `notes.md` at the repo root. This is mandatory and separate from AGENTS.md — AGENTS.md tells you to read it, and it records every approach that has already wasted time in this repo. Skipping it is how the same mistake gets made twice.\n\nThen reply with a short `Constraints I am working under:` list naming the specific rules that bind THIS task — at minimum the phase-order rule, the gate order (`pnpm typecheck` -> `pnpm lint` -> `pnpm test`, none substituting for another), and anything from notes.md's Hard rules that applies. If notes.md logs a failed approach that resembles the task, say so and name the alternative to use instead.\n\nThen carry out the task:\n\n$ARGUMENTS\n\nRules for the work itself: verify before asserting — run the check and paste the output rather than stating what you expect it to show. If a gate fails, report the failure; do not describe the code as done. Never invent a table, column, env var, route, or ticket ID that is not in docs/. Never hand-write a stub to make a gate look passed. Never print a credential to stdout or into the conversation."
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // NOT INCLUDED, AND WHY
+  //
+  // A custom agent looks like the better fit for "every iteration", since an agent's
+  // prompt applies to each request without being invoked. It was deliberately left out:
+  //
+  //   - An agent's `system` value REPLACES the provider's base system prompt rather
+  //     than adding to it. Swapping that out to inject three lines about AGENTS.md
+  //     would trade away the model's own coding instructions. That is a bad trade for
+  //     a behaviour `/rules` already delivers.
+  //   - `default_agent` only affects NEW sessions; it does not change the agent on a
+  //     session that already exists, so it is not a reliable way to change behaviour
+  //     mid-work.
+  //
+  // If you later want the discipline to be automatic, override a BUILT-IN instead of
+  // defining a new agent, and extend rather than replace its prompt. Verify the exact
+  // field names against https://opencode.ai/v2/docs/agents before doing it.
+  //
+  // What is already enforced for free, with no config from you: AGENTS.md is loaded
+  // automatically, and OpenCode re-reads it when it changes on disk.
+  // ---------------------------------------------------------------------------
+}

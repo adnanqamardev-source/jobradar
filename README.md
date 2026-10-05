@@ -21,7 +21,7 @@ These seven documents are the source of truth. Read them in order; each one buil
 | 02c | [Environment & Config](./docs/02c-config.md) | Env vars, config rules, local dev |
 | 03 | [Security & Access](./docs/03-security-and-access.md) | How do people sign in, who can do what, what breaks and what does it say? |
 | 04 | [Frontend Specification](./docs/04-frontend-specification.md) | What does it look like, and how do we talk to every third-party service? |
-| 05 | [Feature Ticket List](./docs/05-feature-ticket-list.md) | The build checklist — 53 MUST tickets, one prompt each. |
+| 05 | [Feature Ticket List](./docs/05-feature-ticket-list.md) | The build checklist — 58 MUST tickets, one prompt each. |
 | 05a | [Phase 0 Tickets](./docs/05a-phase0.md) | Foundation: scaffold, schema, RLS, logger, CI |
 | 05b | [Phase 1 Tickets](./docs/05b-phase1.md) | Back-end: auth, onboarding, ingestion, scoring |
 | 05c | [Phase 2 Tickets](./docs/05c-phase2.md) | Front-end functional: feed, job detail, tracker, digests |

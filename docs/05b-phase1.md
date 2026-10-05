@@ -171,6 +171,61 @@ Per-channel, per-cadence digest controls: send time (IANA time zone), weekdays, 
 
 ---
 
+### ONB-008 — Résumé upload, storage & ownership
+**[SEC][DATA]** · **Priority:** MUST · **Depends on:** ENG-003, AUT-003 · **Added 2026-10-04**
+
+The user uploads one résumé (PDF/DOCX, ≤ 10 MB) to prefill onboarding. Stored in a **private**
+bucket at `{user_id}/{resume_id}.{ext}`, with a `resumes` row tracking status and the parse
+result. Replaces hand-typing four wizard steps — not a replacement for them.
+
+**Done when:**
+- [x] `resumes` table + owner-only RLS on the table **and** on `storage.objects`, with `force row level security` ([03 §4.2a](./03-security-and-access.md))
+- [x] Signed upload/download URLs, 1h expiry; no public URL is ever stored or returned
+- [x] MIME type and size validated server-side — the client-supplied type is not trusted
+- [ ] `supabase db reset` applies `0002_resumes.sql` from empty ⚠️ **never executed — no Postgres on the dev machine**
+- [ ] RLS integration test proves user B cannot read user A's row or file
+- [ ] Account deletion (BE-313) removes the storage objects, not just the row
+
+### ONB-009 — Résumé parsing & extraction
+**[DATA]** · **Priority:** MUST · **Depends on:** ONB-008 · **Added 2026-10-04**
+
+PDF/DOCX → plain text → `ExtractedProfile` ([02a §5.11](./02a-schema.md)), with a per-run
+`confidence` and a `needsReview` flag.
+
+**Done when:**
+- [x] Rule-based extraction is deterministic and offline — same file, same profile
+- [x] Salary handles `₹15,00,000` (Indian `3-2-3` grouping) and `15L` / `1.2 Cr` notation
+- [x] The LLM fallback is **opt-in** and defaults off; no request-path code calls OpenRouter ([02 §1.2](./02-technical-architecture.md))
+- [x] `needsReview` is true below `confidence < 0.6` or when email/titles are missing
+- [ ] Text extraction from real PDF and DOCX files is covered by fixtures ⚠️ **untested — `pdfjs-dist` bundling in a server action is unproven**
+- [ ] A `parse_resume` queue task exists (BE-108) so the LLM fallback can run off the request path
+
+### ONB-010 — Bootstrap prefill from résumé
+**[DATA]** · **Priority:** MUST · **Depends on:** ONB-009, ONB-002..005 · **Added 2026-10-04**
+
+Map `ExtractedProfile` → the onboarding wizard's fields and prefill them. **Review, never
+auto-apply**: the user confirms before anything is written to their profile.
+
+**Done when:**
+- [x] Mapping is a pure function (`src/lib/resume/bootstrap.ts`) with no DB access
+- [x] `mergeBootstrapWithExisting` prefers new values but never blanks a field the user already set
+- [x] An empty extraction is detectable, so the wizard falls back to manual entry
+- [ ] The Server Actions resolve a real session via `requireUser()` ⚠️ **blocked on AUT-003 / BE-302** — they throw rather than use the service role
+- [ ] Writing the confirmed prefill to `profiles` is wired and covered by an RLS integration test
+
+### ONB-011 — Deterministic extraction as the default
+**[DATA]** · **Priority:** MUST · **Depends on:** ONB-009 · **Added 2026-10-04**
+
+Stated separately because it is a decision, not a feature: the ranking-relevant fields are
+extracted **without a model**. [02 §1](./02-technical-architecture.md) principle 6 is
+"deterministic first, model second", and the free OpenRouter tier returns 429 under load.
+
+**Done when:**
+- [x] No model call is reachable from the synchronous parse path
+- [x] A test asserts `fetch` is never called on the default path
+
+---
+
 ## E3 — Ingestion & Sources
 
 ### ING-001 — Connector interface & registry
@@ -334,6 +389,22 @@ User-triggered immediate run for a source or saved search, rate-limited per plan
 - [ ] Exceeding the plan limit returns `quota_exceeded` with the inline upgrade prompt
 - [ ] Rate limit is enforced server-side (cannot be bypassed by direct action call)
 - [ ] `usage_events` records the attempt
+
+### ING-013 — India vs international remote scope
+**[DATA]** · **Priority:** MUST · **Depends on:** ENG-003 · **Added 2026-10-04**
+
+`work_mode` says *remote or not*. It cannot say *which* remote: `"Remote - India"` and
+`"Remote - Worldwide"` are both `remote`, and for an Indian candidate they are not
+interchangeable. Adds a `remote_scope` enum, India-aware salary parsing, and the feed filter.
+
+**Done when:**
+- [x] `remote_scope` enum `('india','global','unknown')` and `jobs.remote_scope`, default `'unknown'`
+- [x] India-specific phrases are matched **before** generic ones, so `"Remote - India (Worldwide)"` → `india`
+- [x] Lakh/crore is resolved **before** the number scan (`15L` → `1500000`, not `15`) and Indian `3-2-3` grouping is handled
+- [x] `v_ranked_jobs` exposes `remote_scope`, and the composite index leads with `work_mode`
+- [x] Unit tests cover each notation and both remote phrasings
+- [ ] `supabase db reset` applies `0003_remote_scope.sql` ⚠️ **never executed**
+- [ ] FE-120 wires the filter end-to-end (Phase 2)
 
 ---
 

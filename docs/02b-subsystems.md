@@ -114,4 +114,41 @@ instead of being falsely complete.
 
 Daily `pg_cron` → `send_digest` tasks partitioned by `time_zone` → handler selects `job_scores` for that user where `final_score >= alert_threshold`, `job_id` not dismissed/applied, `scored_at > last_digest_at`, ordered by score, limit 10 → renders React Email → Resend → writes `digests` row. **Zero results → `status = 'skipped'`, no email.**
 
+### 6.6 Normalisation (RawJob → CanonicalJob)
+
+**Added 2026-10-04.** Described here rather than inline in the data flow (§3.1 step 5) because
+two of its rules are easy to get wrong and expensive to get wrong quietly: the Indian salary
+notation and the India-vs-worldwide remote distinction. `src/lib/ingest/normalize.ts`; every
+function is pure and deterministic.
+
+**Order matters, and it is the opposite of what reads naturally.**
+
+1. **`remote_scope` before country resolution.** India-specific phrases are matched *first*,
+   so `"Remote - India (Worldwide)"` resolves to `india`. A generic remote check first would
+   match `worldwide` and hand an India-only role to the global bucket.
+2. **Lakh/crore before the number scan.** `15L` and `15,00,000` are *scaled* figures. Running
+   the generic number pattern first reads `15L` as `15` — off by 100,000× — and
+   `\d{1,3}(,\d{3})*` cannot match Indian `3-2-3` grouping at all, silently truncating
+   `15,00,000` to `15`. The scan therefore matches any comma-grouped run and strips separators.
+
+| Input | Output | The trap |
+|---|---|---|
+| `₹15,00,000 per year` | `1500000 INR / year` | western grouping regex → `15` |
+| `15L per year` | `1500000 INR / year` | number scan → `15` |
+| `1.2 Cr` | `12000000 INR / year` | suffix not resolved before the scan |
+| `Remote - India` | `scope india`, `country IN` | country only appears in parentheses in some sources |
+| `Remote - Worldwide` | `scope global`, `country null` | "worldwide" is **not** a country |
+| `Bangalore, India` | `city Bangalore`, `IN` | 2-part form, not 3 |
+
+**`remote_scope` is not derivable from `work_mode`, and `country_code` is not a substitute.**
+`work_mode = 'remote'` is true for both `india` and `global` scopes; `country_code` is null for
+genuinely worldwide roles. Filtering an Indian candidate's feed needs the scope column
+specifically — see [02a](./02a-schema.md) §5.2 and §5.4.
+
+**One parser per concern, shared across call sites.** Résumé extraction reuses this module's
+`parseSalary` and `parseLocation` rather than keeping its own. That is not tidiness: an earlier
+draft had two salary parsers, the résumé one lacking Indian grouping, and they disagreed on
+`₹15,00,000` in the same codebase. `notes.md` records the general failure — two definitions of
+one thing will drift.
+
 ---

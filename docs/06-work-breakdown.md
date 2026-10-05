@@ -107,6 +107,7 @@ No styling or UI components are built here. Work is completed when automated uni
 | **BE-110** | Freshness & Expiry Lifecycle | `ING-010` | MUST | Status decay (`active` â†’ `stale` â†’ `expired`) & freshness sub-score decay. |
 | **BE-111** | Run Logging & Observability | `ING-011` | MUST | `scrape_runs` metrics recorder, duration, error capture, API call attribution. |
 | **BE-112** | Manual Trigger Server Action | `ING-012` | SHOULD | `runNow` action with rate-limiting and quota verification. |
+| **BE-317** | India / International Remote Scope | `ING-013` | MUST | `remote_scope` enum + `jobs.remote_scope`, remote-scope and salary normalisation (India lakh/crore, `3-2-3` grouping), country/scope feed filter. **Added 2026-10-04. Delivered:** `0003_remote_scope.sql`, `src/lib/ingest/normalize.ts`, [02b §6.6](./02b-subsystems.md#66-normalisation-rawjob--canonicaljob). |
 
 ### 4.2 Matching & Scoring (Subsystem)
 
@@ -141,6 +142,9 @@ No styling or UI components are built here. Work is completed when automated uni
 | **BE-311** | Stripe Billing & Webhook Engine | `BIL-001..003` | SHOULD | Checkout session creation, raw body webhook signature verification, entitlement sync. |
 | **BE-312** | Admin Ops Queries | `ADM-002`, `ADM-003`, `ADM-004` | MUST | Ops data fetchers for run logs, queue status, source pausing, task retry. |
 | **BE-313** | Account Data Export & Deletion | `ADM-005` | SHOULD | Streamed JSON export and cascading user account purge. |
+| **BE-314** | Résumé Upload, Storage & RLS | `ONB-008` | MUST | Private `resumes` bucket, `resumes` table, owner-only RLS on table **and** `storage.objects`. **Added 2026-10-04. Partially delivered:** `0002_resumes.sql` + `src/lib/storage/resumes.ts` + `src/lib/db/user-client.ts` complete. **`supabase db reset` never run — unverified.** |
+| **BE-315** | Résumé Parsing & Extraction | `ONB-009` | MUST | PDF/DOCX → text → `ExtractedProfile`, rule-based default, LLM fallback opt-in and queue-only. **Added 2026-10-04. Partially delivered:** `src/lib/resume/*` complete and unit-tested (176 tests). **PDF/DOCX text extraction is untested** — no fixtures, and `pdfjs-dist` bundling in a server action is unproven. |
+| **BE-316** | Profile Bootstrap from Résumé | `ONB-010` | MUST | Map `ExtractedProfile` → onboarding prefill; review-before-apply, never auto-save. **Added 2026-10-04. Partially delivered:** `src/lib/resume/bootstrap.ts` (pure, tested) + the three Server Actions. **Actions are blocked at `requireUser()` until BE-302 exists** — they throw rather than fall back to the service role. See [03 §4.2a](./03-security-and-access.md#42a-uploaded-rsum-files--why-this-table-gets-extra-scrutiny). |
 
 ---
 
@@ -171,6 +175,8 @@ Built using plain semantic HTML, unstyled Radix UI primitives, or basic grid sca
 | **FE-116** | User Settings & Profile Editor | `ONB-006`, `ONB-007` | MUST | Edit profile, skills, logistics, dealbreakers, and notification prefs. |
 | **FE-117** | Inline Upgrade & Paywall Prompts | `BIL-004` | SHOULD | Non-blocking inline limit notices with Stripe checkout redirect. |
 | **FE-118** | Admin Dashboard Interface | `ADM-001..003` | MUST | Tables for sources, scrape runs, queue monitoring, and retry buttons. |
+| **FE-119** | Résumé Upload & Prefill Review | `ONB-008`, `ONB-010` | MUST | Upload step before the wizard, extracted-field review/edit, apply-prefill. **Added 2026-10-04. Not started — Phase 2.** Blocked on BE-302 and on BE-314/316 being unblocked. |
+| **FE-120** | Feed Filters: Country & Remote Scope | `ING-013` | MUST | `Country` (All/India/Other) + `Remote Scope` (Any / Remote–India / International), URL-synced. **Added 2026-10-04. Not started — Phase 2.** |
 
 ---
 
@@ -225,6 +231,10 @@ Every single ticket from [05 Feature Ticket List](./05-feature-ticket-list.md) m
 | **ONB-005** | Split | `BE-304`, `FE-102`, `FE-103` | Step 4: Dealbreakers & interstitial flow |
 | **ONB-006** | Split | `BE-304`, `FE-116` | Profile editing & rescore trigger |
 | **ONB-007** | Split | `BE-304`, `FE-116` | Notification preferences |
+| **ONB-008** | Split | `BE-314`, `FE-119` | Résumé upload → private storage + RLS (BE) / upload UI (FE) |
+| **ONB-009** | Split | `BE-315`, `FE-119` | Résumé parsing & extraction → review screen (FE) |
+| **ONB-010** | Split | `BE-316`, `FE-119` | Bootstrap prefill (BE) / apply-prefill in wizard (FE) |
+| **ONB-011** | Phase 1 | `BE-315` | Rule-based deterministic extraction as the default (no LLM in the request path) |
 | **ING-001** | Phase 1 | `BE-101` | Connector interface & registry |
 | **ING-002** | Phase 1 | `BE-102` | Greenhouse, Lever, Ashby connectors |
 | **ING-003** | Phase 1 | `BE-103` | Remotive, Arbeitnow, USAJOBS connectors |
@@ -237,6 +247,7 @@ Every single ticket from [05 Feature Ticket List](./05-feature-ticket-list.md) m
 | **ING-010** | Phase 1 | `BE-110` | Freshness decay & expiry |
 | **ING-011** | Phase 1 | `BE-111` | Scrape run logging & metrics |
 | **ING-012** | Split | `BE-112`, `FE-105` | Manual "run now" action & trigger |
+| **ING-013** | Split | `BE-317`, `FE-120` | India vs international remote scope — enum + normalisation (BE) / country & scope filters (FE) |
 | **SCR-001** | Phase 1 | `BE-201` | Hard gates (knockout filters) |
 | **SCR-002** | Phase 1 | `BE-202` | Deterministic rule-based scoring |
 | **SCR-003** | Phase 1 | `BE-203` | OpenRouter pgvector embedding |

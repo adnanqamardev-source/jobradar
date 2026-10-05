@@ -205,14 +205,24 @@ jobradar/
 │   │
 │   ├── lib/
 │   │   ├── db/
-│   │   │   ├── client.ts            #   browser client (anon key, RLS applies)
-│   │   │   ├── server.ts            #   server client (anon + user JWT)
-│   │   │   ├── admin.ts             #   service-role client — SERVER ONLY
+│   │   │   ├── client.ts            #   server-side factory → admin.ts (see note)
+│   │   │   ├── admin.ts             #   service-role client — SERVER ONLY, sole holder of the import
+│   │   │   ├── user-client.ts       #   RLS-enforcing client (anon + user JWT) — BE-302, throws until built
+│   │   │   ├── server.ts            #   (planned) browser/SSR session client
 │   │   │   └── queries/             #   one file per read: jobs.ts, apps.ts…
 │   │   ├── auth/
 │   │   │   ├── session.ts           #   getServerSession(), requireUser()
+│   │   │   ├── require-user.ts      #   requireUser() guard seam — BE-302, throws until built
 │   │   │   ├── guards.ts            #   requireAdmin(), requirePlan()
 │   │   │   └── callback.ts
+│   │   ├── resume/                  # ★ résumé → profile (BE-315), see 02a §5.11
+│   │   │   ├── parse.ts             #   PDF/DOCX → text (pdfjs-dist / mammoth)
+│   │   │   ├── extract-rules.ts     #   deterministic extractor (default path)
+│   │   │   ├── extract-llm.ts       #   LLM fallback — opt-in, queue-only
+│   │   │   ├── extract.ts           #   orchestrator: rules, then LLM if allowed
+│   │   │   └── bootstrap.ts         #   ExtractedProfile → onboarding prefill (pure)
+│   │   ├── storage/
+│   │   │   └── resumes.ts           #   private bucket: signed up/download URLs
 │   │   ├── env.ts                   #   Zod env schema — single source of truth
 │   │   ├── connectors/              # ★ PLUG-IN POINT (see §6.1)
 │   │   │   ├── types.ts             #   SourceConnector interface + RawJob
@@ -251,6 +261,7 @@ jobradar/
 │   ├── types/
 │   │   ├── db.ts                    #   DB row types
 │   │   ├── canonical-job.ts
+│   │   ├── resume.ts                #   ExtractedProfile, ResumeRecord, bootstrap payload
 │   │   └── api.ts                   #   Zod-inferred request/response types
 │   │
 │   └── styles/
@@ -278,6 +289,22 @@ jobradar/
     ├── ci.yml                       #   lint → typecheck → unit → integration → e2e
     └── (no deploy.yml)              #   deploys run via Vercel's Git integration — see below
 ```
+
+**`db/` note — revised 2026-10-04.** This map used to describe `client.ts` as the browser
+(anon-key) client. It is not, and the distinction is load-bearing: the anon key is what makes
+RLS apply, so "which file hands me which key" *is* the security boundary.
+
+| File | Key | RLS | Used by |
+|---|---|---|---|
+| `admin.ts` | service role | **bypassed** | workers, cron, admin ops. The only module allowed to import `@supabase/supabase-js` — enforced by the ESLint `no-restricted-imports` rule. |
+| `client.ts` | service role (delegates to `admin.ts`) | **bypassed** | server-side callers that want one import. A thin alias, not a second policy. |
+| `user-client.ts` | anon + the caller's JWT | **enforced** | every user-facing action. **Throws until BE-302 exists.** |
+
+`user-client.ts` refuses to degrade to the service-role client when it cannot resolve a real
+JWT. That refusal is the point: a service-role fallback would leave the §4.2 policies in
+`docs/03` inert while still returning rows, so the bug would be invisible in testing and in
+production. `tests/unit/auth-guard.test.ts` asserts the refusal, including that a token never
+reaches an error message.
 
 ### Deployment — Vercel Git integration, zero YAML
 
