@@ -2,6 +2,12 @@
 node_modules/
 .pnpm-store/
 
+# git worktrees (agent isolation — see notes.md)
+# Each is a full checkout of this repo, so `git add -A` from the main tree must never
+# see its contents. Listed here rather than left to a global ignore, because an agent
+# running `git add -A` would otherwise stage another worktree's entire source tree.
+/.worktrees/
+
 # env — .env.example is the only one committed
 .env
 .env.local

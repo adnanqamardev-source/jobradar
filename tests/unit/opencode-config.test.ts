@@ -65,13 +65,64 @@ function stripLineComments(raw: string): string {
   return out;
 }
 
+/**
+ * Drop trailing commas, which JSONC allows and `JSON.parse` rejects.
+ *
+ * A comment-only stripper is not enough to make a `.jsonc` file parseable: the first version
+ * of this test did exactly that and failed with "Expected double-quoted property name" on
+ * `{ "directory": ".worktrees", }`. Trailing commas are idiomatic in a `.jsonc` file and are
+ * what most editors format to, so the parser accommodates them rather than the config being
+ * contorted to suit the test.
+ */
+function stripTrailingCommas(json: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < json.length; i++) {
+    const char = json[i]!;
+
+    if (inString) {
+      out += char;
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      out += char;
+      continue;
+    }
+
+    if (char === ",") {
+      // Look ahead past whitespace for a closing brace/bracket.
+      let j = i + 1;
+      while (j < json.length && /\s/.test(json[j]!)) j++;
+      if (json[j] === "}" || json[j] === "]") {
+        continue; // omit the comma
+      }
+    }
+
+    out += char;
+  }
+
+  return out;
+}
+
+/** JSONC -> JSON: strip line comments, then trailing commas. */
+function parseJsonc(source: string): Record<string, unknown> {
+  return JSON.parse(stripTrailingCommas(stripLineComments(source))) as Record<string, unknown>;
+}
+
 const raw = readFileSync(CONFIG_PATH, "utf8");
 
 describe("opencode.jsonc", () => {
-  const config = JSON.parse(stripLineComments(raw)) as Record<string, unknown>;
+  const config = parseJsonc(raw);
 
   it("parses as JSONC (comments and all)", () => {
-    expect(() => JSON.parse(stripLineComments(raw))).not.toThrow();
+    expect(() => parseJsonc(raw)).not.toThrow();
     // A file of only comments would "parse" to nothing, so require real content.
     expect(Object.keys(config).length).toBeGreaterThan(0);
   });
@@ -84,6 +135,30 @@ describe("opencode.jsonc", () => {
     // The trap: V2 accepts `instructions` but never resolves its files, globs, or URLs.
     // Adding it would look configured while doing nothing. AGENTS.md is auto-loaded.
     expect(config.instructions).toBeUndefined();
+  });
+
+  describe("worktree isolation", () => {
+    const wt = config.worktree as { directory?: string } | undefined;
+
+    it("sets a worktree parent directory", () => {
+      // Two sessions in one tree silently destroy each other's work; see notes.md.
+      expect(wt?.directory).toBeTruthy();
+    });
+
+    it("puts worktrees inside the repo, where they are gitignored", () => {
+      // A path outside the repo would need write access beyond the workspace. The trade-off
+      // is only safe because .gitignore excludes it — asserted below.
+      expect(wt?.directory).toBe(".worktrees");
+    });
+
+    it("is excluded by .gitignore, so `git add -A` cannot stage a worktree", () => {
+      // The failure this prevents: an in-repo worktree that is not ignored appears to the
+      // main tree as untracked content, and `git add -A` stages a second full copy of the
+      // source tree. A `.gitignore` entry is the only thing standing between that and a
+      // wrecked commit.
+      const gitignore = readFileSync(join(process.cwd(), ".gitignore"), "utf8");
+      expect(gitignore).toMatch(/^\/\.worktrees\/$/m);
+    });
   });
 
   describe("/rules command", () => {

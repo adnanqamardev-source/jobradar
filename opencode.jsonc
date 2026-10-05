@@ -2,6 +2,28 @@
   "$schema": "https://opencode.ai/config.json",
 
   // ---------------------------------------------------------------------------
+  // Worktree isolation
+  //
+  // WHY: two sessions in one working tree destroy each other's work silently. During the
+  // 2026-10-04 session, a file that had just been created vanished and a tracked file
+  // reverted to HEAD, with no stash and nothing in the reflog — a second session working
+  // the same directory. A revert leaves no trace, so nothing warns you.
+  //
+  // `directory` is the PARENT for new worktrees; OpenCode appends the worktree name.
+  // Relative paths resolve against the project's canonical checkout. It is inside the
+  // repo and gitignored on purpose: a sibling directory would need write access outside
+  // the workspace, and an in-repo location that is *not* ignored would let `git add -A`
+  // stage a second copy of the whole source tree.
+  //
+  // A worktree is a full checkout, so it has no `node_modules`, `.env.local`, or
+  // `tools/gitleaks` — all gitignored. Run `pnpm install` after creating one, and see
+  // notes.md for the full bring-up checklist.
+  // ---------------------------------------------------------------------------
+  "worktree": {
+    "directory": ".worktrees",
+  },
+
+  // ---------------------------------------------------------------------------
   // JobRadar — local OpenCode configuration
   //
   // WHY THIS FILE IS ALMOST EMPTY
