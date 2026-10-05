@@ -99,6 +99,14 @@ Non-deterministic test behaviour — intermittent failures, order-dependent resu
 - **`""` is present.** `??` and Zod `.optional()` both treat an empty string as a real value.
   Anything from a `.env` file or a GitHub `vars:` expression needs a `firstNonEmpty()` helper.
   This has now broken this repo twice.
+- **Never round-trip a repo file through PowerShell `Get-Content`/`Set-Content`.** It rewrote a
+  doc and destroyed its UTF-8 box-drawing characters. Use the `edit` tool, and check encoding by
+  counting U+FFFD at the byte level — not by whether the console renders the glyphs.
+- **When reordering a table of regex literals, reverse it programmatically, never by retyping.**
+  Hand-copying nine regexes from one module into another is how `|1[- ]2\s*years?` — which exists
+  only in `normalize.ts` — ended up in an `oldString` for `extract-rules.ts` and made three correct
+  edits fail with "could not find oldString". The symptom looked like a tool bug; it was my
+  transcription. Reverse/rewrite with a script that asserts the expected key order first.
 - **A service-role fallback silently disables RLS.** Handing a user-scoped action the service key
   "temporarily" makes every `*_own` policy inert while the queries still return rows — invisible
   in tests *and* in production. `src/lib/db/user-client.ts` throws instead, and
@@ -111,6 +119,24 @@ Non-deterministic test behaviour — intermittent failures, order-dependent resu
 - **Count, don't estimate, in docs.** A ticket-count table said "+7 / 60 tickets" for 5 added
   MUST tickets; `tests/unit/doc-drift.test.ts` counted the `**Priority:**` markers and failed.
   When a doc states a number, the number must be derived or asserted, never typed from memory.
+- **Two agents in one working tree will silently destroy each other's work.** Mid-task, a
+  file I had just created (`src/lib/storage/resume-file.ts`) vanished and an edited tracked file
+  (`extract-rules.ts`) reverted to HEAD, with no stash and nothing in the reflog. Cause: a second
+  session working the same directory (it left Playwright probes for `/login`, `/pricing`, `/demo`
+  — Phase 2 UI work). Reverted edits leave **no trace**, so nothing warns you.
+  **Check `git status` for files you did not create before and after any write**, and commit early
+  and often rather than accumulating a long uncommitted stretch. If a change you watched succeed
+  has disappeared, suspect this before suspecting the tool.
+- **A first-match-wins lookup table needs its patterns to be disjoint.** `SENIORITY_KEYWORDS`
+  listed `lead|principal|staff` inside `senior`, so those three branches were unreachable dead
+  code — and the suite stayed green because no fixture used "Staff Engineer". Two rules: every
+  pattern describes only its own level, and test the *inputs that break it*, not just the happy
+  path. Also: don't mix a stated fact (a job title) with a fallback heuristic (years of
+  experience) in one ordered table — the heuristic then wins by position.
+- **`\b` cannot terminate a token that ends in a non-word character.** `"C++"`/`"C#"` are
+  unreachable behind `\bC\+\+\b`; use a negative lookahead `(?!\w)`, which still refuses "Go" in
+  "Going". Whenever a list of literals is matched with `\b`, check whether any entry ends in
+  punctuation.
 - **OpenCode V2 accepts `instructions` in config but never loads it.** The schema takes it, the file
   parses, and it does nothing — files, globs and URLs are all unresolved. `AGENTS.md` is the only
   instruction source that works, and only `AGENTS.md` (not `CLAUDE.md`). A session asking for
