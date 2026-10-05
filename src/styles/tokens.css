@@ -4,9 +4,7 @@
    src/ for `#[0-9a-fA-F]{3,8}` and fails the build on a hit.
    ───────────────────────────────────────────────────────────── */
 
-@import "tailwindcss";
-
-:root {
+@theme {
   /* ── 1.1 Core palette ────────────────────────────────────── */
   --color-ink: #14161a;
   --color-ink-2: #4a5160;

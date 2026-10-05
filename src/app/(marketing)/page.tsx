@@ -8,7 +8,7 @@ export default function Page() {
         </p>
         <a
           href="/login"
-          className="inline-flex items-center justify-center px-6 py-3 text-body-md font-medium text-white bg-brand rounded-control hover:bg-brand-press transition-colors"
+          className="inline-flex items-center justify-center px-6 py-3 text-body font-medium text-white bg-brand rounded-control hover:bg-brand-press transition-colors"
         >
           Start free
         </a>
