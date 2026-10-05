@@ -244,17 +244,27 @@ export function parseSalary(raw: string): {
   if (/month|\/mo|per mo/i.test(raw)) period = "month";
   if (/hour|\/hr|per hr/i.test(raw)) period = "hour";
 
-  // Lakh/crore notation is unambiguously INR and is a *scaled* figure, so it is
-  // resolved before the general number scan — otherwise "15L" reads as 15.
-  const lakh = /(\d+(?:\.\d+)?)\s*(?:l|lakh)s?\b/i.exec(raw);
-  if (lakh?.[1]) {
-    return { min: parseFloat(lakh[1]) * 100000, max: null, currency: "INR", period };
+  // LPA ("lakh per annum") is the standard CTC suffix on Indian resumes — the exact
+  // audience of BE-317 — and it must be matched before the lakh pattern. "12 LPA" does
+  // NOT match the lakh regex: that requires a word boundary after "l", and "L" is
+  // followed by "P", two word characters, so no boundary exists. It therefore fell
+  // through to the generic number scan and returned 12 USD, which is wrong by six
+  // orders of magnitude *and* in the wrong currency.
+  const lpa = /(\d+(?:\.\d+)?)\s*lpa\b/i.exec(raw);
+  if (lpa?.[1]) {
+    return { min: parseFloat(lpa[1]) * 100000, max: null, currency: "INR", period: "year" };
   }
 
-  const crore = /(\d+(?:\.\d+)?)\s*(?:cr|crore)s?\b/i.exec(raw);
-  if (crore?.[1]) {
-    return { min: parseFloat(crore[1]) * 10000000, max: null, currency: "INR", period };
-  }
+  // Lakh/crore notation is unambiguously INR and is *scaled*, so it is resolved before
+  // the general number scan — otherwise "15L" reads as 15.
+  //
+  // Ranges are collected with matchAll rather than exec: "15L - 20L" is an advertised
+  // format, and taking only the first match silently dropped the upper bound.
+  const lakh = collectScaledFigures(raw, /(?:l|lakh)s?\b/i, 100000);
+  if (lakh) return { ...lakh, currency: "INR", period };
+
+  const crore = collectScaledFigures(raw, /(?:cr|crore)s?\b/i, 10000000);
+  if (crore) return { ...crore, currency: "INR", period };
 
   // Detect currency
   let currency = "USD";
@@ -270,7 +280,10 @@ export function parseSalary(raw: string): {
     return { min: null, max: null, currency, period };
   }
 
-  const parsed = numbers.map((n) => parseInt(n.replace(/,/g, ""), 10));
+  // parseFloat, not parseInt: "$120,000.50" was truncating to 120000. Salary figures
+  // are not integers (hourly rates, GBP/INR paise), and a floor that silently rounds
+  // down changes which jobs clear a salary gate.
+  const parsed = numbers.map((n) => parseFloat(n.replace(/,/g, "")));
 
   const firstNum = parsed[0] ?? null;
   const secondNum = parsed[1] ?? null;
@@ -280,6 +293,30 @@ export function parseSalary(raw: string): {
   }
 
   return { min: firstNum, max: secondNum, currency, period };
+}
+
+/**
+ * Every `<number><scale-suffix>` figure in the text, scaled to an absolute amount.
+ *
+ * Returns null when the suffix never appears, so the caller can fall through to the next
+ * notation. Handles both a single value ("15L") and a range ("15L - 20L").
+ */
+function collectScaledFigures(
+  raw: string,
+  suffix: RegExp,
+  multiplier: number,
+): { min: number; max: number | null } | null {
+  const figure = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${suffix.source}`, "gi");
+  const values = [...raw.matchAll(figure)].map((m) => parseFloat(m[1] ?? "0") * multiplier);
+
+  const first = values[0];
+  if (first === undefined) return null;
+
+  // Only treat a second figure as a range bound when it is scaled by the same suffix;
+  // a bare number elsewhere in the string (a year, a headcount) is not a bound.
+  const second = values[1];
+
+  return { min: first, max: second ?? null };
 }
 
 // ---------------------------------------------------------------------------

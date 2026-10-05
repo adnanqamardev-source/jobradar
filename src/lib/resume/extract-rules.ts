@@ -29,17 +29,39 @@ const SECTION_HEADERS = {
   certifications: /^(certifications|certificates|licenses)\s*:?\s*$/i,
 };
 
-// Seniority keywords
+// Seniority keywords.
+//
+// Scanned in declaration order and the FIRST match wins, so each pattern must describe
+// only its OWN level. Listing `lead|principal|staff` inside `senior` made those three
+// branches unreachable: "Staff Engineer" and "Lead Engineer" both returned "senior",
+// because `senior` was tested first and matched. A seniority extractor that collapses
+// staff/lead/principal into "senior" is worse than one that returns null, because the
+// value it returns becomes the profile's `seniority` field and therefore a ranking input.
+//
+// Ordered most specific to least, so where two levels genuinely overlap the more senior
+// reading wins. `staff`/`principal` match as bare words rather than "staff engineer" /
+// "principal engineer", because the narrow forms miss "Staff Software Engineer" and
+// "Principal Product Manager".
+//
+// NOTE: `normalize.ts` carries a parallel `extractSeniority` (SCR-002) that never had this
+// bug - which is exactly why the suite stayed green while this function was broken. Two
+// implementations of one rule, with only the broken one reachable from the resume path.
+//
+// These patterns deliberately carry NO year ranges ("5+ years" etc). A title is the stated
+// fact; years are a fallback. Keeping both in the same table let `senior`'s year range
+// outrank an explicit "Junior Developer" purely by declaration order, so a resume reading
+// "Junior Developer" followed by "5+ years of experience" classified as senior. Years are
+// applied only by the fallback below, once no keyword has matched.
 const SENIORITY_KEYWORDS = {
-  intern: /\b(intern|internship|trainee)\b/i,
-  junior: /\b(junior|jr\.?|entry[- ]level|0[- ]2\s*years?)\b/i,
-  mid: /\b(mid[- ]level|intermediate|2[- ]5\s*years?)\b/i,
-  senior: /\b(senior|sr\.?|lead|principal|staff|5\+\s*years?|8\+\s*years?)\b/i,
-  lead: /\b(lead|team lead|tech lead|engineering lead)\b/i,
-  staff: /\b(staff engineer|staff developer)\b/i,
-  principal: /\b(principal engineer|principal developer)\b/i,
-  director: /\b(director|head of|vp|vice president)\b/i,
   exec: /\b(cto|ceo|cio|chief)\b/i,
+  director: /\b(director|head of|vp|vice president)\b/i,
+  principal: /\bprincipal\b/i,
+  staff: /\bstaff\b/i,
+  lead: /\b(lead|tech lead|team lead|engineering lead)\b/i,
+  senior: /\b(senior|sr\.?)\b/i,
+  mid: /\b(mid[- ]level|intermediate)\b/i,
+  junior: /\b(junior|jr\.?|entry[- ]level)\b/i,
+  intern: /\b(intern|internship|trainee)\b/i,
 };
 
 // Work mode keywords
@@ -124,7 +146,19 @@ function extractSkills(text: string): string[] {
   const lowerText = text.toLowerCase();
 
   for (const skill of COMMON_SKILLS) {
-    const pattern = new RegExp(`\\b${skill.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    // Trailing guard is a negative lookahead, NOT `\b`.
+    //
+    // `\b` matches a boundary between a word char and a non-word char. For a skill ending in
+    // a non-word char there is no such boundary to find: in "C++, Python" the character after
+    // the final "+" is a space, and "+" is itself non-word, so no boundary exists. `C++` and
+    // `C#` were listed in COMMON_SKILLS and could never be extracted - a skill list that
+    // silently drops entries.
+    //
+    // `(?!\w)` means "not followed by a word character", which holds at end-of-string and
+    // before any separator. So it behaves like `\b` for word-ending skills ("Go" still will
+    // not match "Going") while also terminating correctly on `+` and `#`.
+    const escaped = skill.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`\\b${escaped}(?!\\w)`, "i");
     if (pattern.test(lowerText)) {
       found.push(skill);
     }

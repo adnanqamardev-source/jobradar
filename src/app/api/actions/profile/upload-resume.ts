@@ -17,7 +17,8 @@
 import { z } from "zod";
 import { createUserClient } from "@/lib/db/user-client";
 import { resumeUploadRequestSchema } from "@/types/api";
-import { createResumeUploadUrl, validateResumeFile } from "@/lib/storage/resumes";
+import { createResumeUploadUrl } from "@/lib/storage/resumes";
+import { validateResumeFile } from "@/lib/storage/resume-file";
 import { logger } from "@/lib/logger";
 import { requireUser } from "@/lib/auth/require-user";
 import type { ResumeRow } from "@/types/db";
@@ -110,12 +111,48 @@ export async function uploadResume(
       };
     }
 
-    // Generate signed upload URL
-    const { uploadUrl, filePath, expiresAt } = await createResumeUploadUrl(
-      userId,
-      resume.id,
-      mimeType,
-    );
+    // Generate the signed upload URL. If this throws, the row inserted above is rolled back
+    // rather than marked 'failed' — unlike process-resume, no file exists yet, so the row
+    // is not a record of anything. Left behind it would sit at file_path = '' with status
+    // 'pending': invisible in the UI, and unusable by processResume, whose ownership check
+    // rejects the empty path with "Access denied".
+    let uploadUrl: string;
+    let filePath: string;
+    let expiresAt: string;
+    try {
+      ({ uploadUrl, filePath, expiresAt } = await createResumeUploadUrl(
+        userId,
+        resume.id,
+        mimeType,
+      ));
+    } catch (error) {
+      logger.error("Failed to create resume upload URL; rolling back row", {
+        resumeId: resume.id,
+        error,
+      });
+
+      const { error: deleteError } = await supabase
+        .from("resumes")
+        .delete()
+        .eq("id", resume.id);
+
+      if (deleteError) {
+        // The orphan is invisible to the user and harmless to others, but log it: an
+        // accumulating pile of empty rows is a signal that storage is unhealthy.
+        logger.error("Failed to roll back orphan resume row", {
+          resumeId: resume.id,
+          error: deleteError,
+        });
+      }
+
+      return {
+        ok: false,
+        error: {
+          code: "UPLOAD_URL_FAILED",
+          message: "Could not prepare the upload. Please try again.",
+        },
+      };
+    }
 
     // Update resume record with file path
     const { error: updateError } = await supabase

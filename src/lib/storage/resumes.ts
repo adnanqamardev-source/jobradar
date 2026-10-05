@@ -1,17 +1,20 @@
 /**
- * storage.ts — Supabase Storage helpers for resume files (BE-314).
+ * resumes.ts — Supabase Storage operations for résumé files (BE-314).
  *
- * All resume files are stored in a private `resumes` bucket. Files are
- * organized by user ID: `resumes/{user_id}/{resume_id}.{ext}`.
+ * All résumé files live in a private `resumes` bucket, organised by user ID:
+ * `resumes/{user_id}/{resume_id}.{ext}`.
  *
  * Security:
  * - Bucket is private (no public access)
  * - RLS policies restrict access to the owning user
- * - File paths are never exposed directly; signed URLs are generated
- *   with short expiry for downloads
+ * - File paths are never exposed directly; signed URLs are generated with short expiry
+ *
+ * The pure path/validation helpers live in `./resume-file`, which deliberately does not
+ * import the database client — see that module for why.
  */
 
 import { createClient } from "@/lib/db/client";
+import { getResumeFilePath } from "./resume-file";
 
 const BUCKET_NAME = "resumes";
 const SIGNED_URL_EXPIRY_SECONDS = 3600; // 1 hour
@@ -35,50 +38,18 @@ export interface SignedUrlResult {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Generate the storage file path for a resume.
- * Format: `{user_id}/{resume_id}.{ext}`
- */
-export function getResumeFilePath(userId: string, resumeId: string, mimeType: string): string {
-  const ext = mimeType === "application/pdf" ? "pdf" : "docx";
-  return `${userId}/${resumeId}.${ext}`;
-}
+// `getResumeFilePath`, `getResumeExtension` and `validateResumeFile` now live in
+// `./resume-file` so they can be unit tested without a configured environment. Re-exported
+// here so existing importers keep working, and so the storage module remains the obvious
+// entry point for "everything about résumé files".
 
-/**
- * Get the file extension from a resume MIME type.
- */
-export function getResumeExtension(mimeType: string): string {
-  return mimeType === "application/pdf" ? "pdf" : "docx";
-}
-
-/**
- * Validate a resume file before upload.
- * Returns an error message if invalid, null if valid.
- */
-export function validateResumeFile(
-  mimeType: string,
-  sizeBytes: number,
-): string | null {
-  const allowedTypes = [
-    "application/pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  ];
-
-  if (!allowedTypes.includes(mimeType)) {
-    return "Invalid file type. Only PDF and DOCX are allowed.";
-  }
-
-  const maxSize = 10 * 1024 * 1024; // 10MB
-  if (sizeBytes > maxSize) {
-    return "File too large. Maximum size is 10MB.";
-  }
-
-  if (sizeBytes === 0) {
-    return "File is empty.";
-  }
-
-  return null;
-}
+export {
+  getResumeFilePath,
+  validateResumeFile,
+  resumeExtensionFor,
+  RESUME_MIME_TYPES,
+  MAX_RESUME_BYTES,
+} from "./resume-file";
 
 // ---------------------------------------------------------------------------
 // Storage operations
@@ -174,23 +145,37 @@ export async function deleteResumeFile(
 }
 
 /**
- * Check if a resume file exists in storage.
+ * Check whether a résumé object exists in storage.
+ *
+ * Errors are thrown, not folded into `false`. The previous version returned `false` on any
+ * storage error, which made "the network is down" indistinguishable from "the user never
+ * uploaded this" — and the caller that most needs this is BE-313's account-deletion sweep,
+ * where a false negative means a file survives a deletion the user asked for and was told
+ * had completed. A cleanup routine must fail loudly on an inconclusive check.
+ *
+ * @throws Whatever the storage client throws, so the caller can distinguish
+ *         "absent" from "could not determine".
  */
 export async function resumeFileExists(filePath: string): Promise<boolean> {
   const supabase = createClient();
+  const segments = filePath.split("/");
+  const folder = segments[0];
+  const name = segments[1];
 
-  const { data, error } = await supabase.storage
-    .from(BUCKET_NAME)
-    .list(filePath.split("/")[0], {
-      limit: 1,
-      search: filePath.split("/")[1],
-    });
-
-  if (error) {
-    return false;
+  if (!folder || !name) {
+    throw new Error(`Malformed resume path: ${filePath}`);
   }
 
-  return data && data.length > 0;
+  const { data, error } = await supabase.storage.from(BUCKET_NAME).list(folder, {
+    limit: 1,
+    search: name,
+  });
+
+  if (error) {
+    throw new Error(`Failed to check resume existence: ${error.message}`);
+  }
+
+  return (data?.length ?? 0) > 0;
 }
 
 /**

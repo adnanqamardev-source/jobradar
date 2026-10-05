@@ -37,7 +37,13 @@ export interface ProcessResumeResult {
   ok: boolean;
   data?: {
     resumeId: string;
-    status: "completed" | "failed";
+    /**
+     * Only "completed" is reachable here. A parse failure is returned as
+     * `ok: false` with code `EXTRACTION_FAILED`, because the caller cannot use a partial
+     * profile — the previous `"completed" | "failed"` union advertised a "failed" variant
+     * this function never produced.
+     */
+    status: "completed";
     confidence: number;
     needsReview: boolean;
     extractedProfile: {
@@ -127,17 +133,47 @@ export async function processResume(input: { resumeId: string }): Promise<Proces
       };
     }
 
-    // Update status to processing
+    // Mark the row as in-flight. `processing` is a claim, not a state we can leave behind:
+    // anything that throws below used to land in the outer catch, which returned an error
+    // and left the row stuck at 'processing' forever — every later call then re-ran the
+    // whole extraction instead of reporting the failure that had already happened.
     await supabase
       .from("resumes")
       .update({ status: "processing" })
       .eq("id", resumeId);
 
-    // Download and extract text from the file
-    const { text } = await getResumeText(resume.user_id, resume.file_path);
+    // Download + extract, with the failure recorded against the row.
+    let result: Awaited<ReturnType<typeof extractProfile>>;
+    try {
+      const { text } = await getResumeText(resume.user_id, resume.file_path);
+      result = await extractProfile(text);
+    } catch (error) {
+      // A corrupt or unreadable file throws from pdfjs/mammoth. Persist that as terminal
+      // state rather than leaving an in-flight claim: this row has a real file behind it,
+      // so unlike a failed upload it must NOT be rolled back — the user needs to see that
+      // their résumé failed to parse, with a reason, rather than have it vanish.
+      const message = error instanceof Error ? error.message : "Unknown extraction error";
+      logger.error("Resume extraction failed", { resumeId, message });
 
-    // Run extraction pipeline
-    const result = await extractProfile(text);
+      const { error: failError } = await supabase
+        .from("resumes")
+        .update({ status: "failed", error: message })
+        .eq("id", resumeId);
+
+      if (failError) {
+        // The row stays at 'processing'. Log loudly — this is the one case where the
+        // invariant cannot be restored, and a silent wedge is what we are avoiding.
+        logger.error("Failed to record resume failure", { resumeId, error: failError });
+      }
+
+      return {
+        ok: false,
+        error: {
+          code: "EXTRACTION_FAILED",
+          message: "Could not read this résumé file. Try re-uploading it as a PDF or DOCX.",
+        },
+      };
+    }
 
     // Update the resume record
     const { error: updateError } = await supabase
@@ -147,6 +183,7 @@ export async function processResume(input: { resumeId: string }): Promise<Proces
         status: "completed",
         confidence: result.profile.confidence,
         extracted_at: new Date().toISOString(),
+        error: null,
       })
       .eq("id", resumeId);
 
