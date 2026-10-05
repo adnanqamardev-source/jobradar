@@ -95,7 +95,7 @@ No styling or UI components are built here. Work is completed when automated uni
 
 | ID | Title | Origin Ticket | Priority | Focus |
 |---|---|---|---|---|
-| **BE-101** | Connector Interface & Registry | `ING-001` | MUST | `SourceConnector` interface, `RawJob` schema, and dynamic registry. |
+| **BE-101** | Connector Interface & Registry | `ING-001` | MUST | `SourceConnector` interface, `RawJob` schema, and dynamic registry. **Completed 2026-10-05:** `src/lib/connectors/{types,http,registry,index}.ts` — `kind` + `costClass` + async-iterable `fetch(cfg, ctx)`; `fetch`/clock/sleep injected on `RunCtx` so contract tests never hit the network; `fetchJson` carries the docs/04 §5.9 policy (30s timeout, `AbortSignal`, retry ×3 with `2^n` backoff, typed error mapping); unknown kind throws naming the kind. `RawJob` re-exported from `src/types/canonical-job.ts` rather than redefined. 17 tests. |
 | **BE-102** | Tier 1 ATS Connectors (GH, Lever, Ashby) | `ING-002` | MUST | Public API clients parsing boards into `RawJob`. |
 | **BE-103** | Remote & Federal Connectors (Remotive, Arbeitnow, USAJOBS) | `ING-003` | MUST | Throttled API clients, USAJOBS custom auth headers. |
 | **BE-104** | Aggregator Connector (Adzuna) | `ING-004` | MUST | Country search, salary extraction, quota accounting. |

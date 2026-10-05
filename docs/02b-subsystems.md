@@ -45,6 +45,19 @@ Firecrawl usage rules: always `formats: ["json"]` with an explicit extraction sc
 
 **Connector contract tests** run against `tests/integration/fixtures/sources/{kind}.json` — CI never hits live APIs.
 
+**Where this is implemented (BE-101, 2026-10-05).** `src/lib/connectors/types.ts` holds the
+interface and `HTTP_DEFAULTS`; `http.ts` holds `fetchJson` — the single place a connector may touch
+the network, carrying the §5.9 timeout/retry/error-mapping policy; `registry.ts` maps
+`source_kind` → connector and throws naming the kind when one is missing. Three deliberate choices
+the code depends on:
+
+- `RawJob` is **not** defined in `connectors/types.ts`. The seam contract puts the schema in
+  `src/types/canonical-job.ts` and derives the type from it (§8.1); the module re-exports it.
+- `RunCtx` carries `fetch`, `now` and `sleep`, so a connector is testable against a fixture with a
+  fake clock and no real waiting.
+- `fetchJson` retries only 429 and 5xx (plus timeouts/network errors). A 4xx that is not 429 is the
+  caller's fault — retrying it burns quota and hides a bad key.
+
 ### 6.2 Deduplication (two passes)
 
 1. **Exact — `dedupe_hash`**

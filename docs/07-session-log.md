@@ -942,6 +942,7 @@ and produce the next-phase plan with the available skills/MCP resources mapped o
 |---|---|
 | BE-301 auth endpoints | `POST /api/auth/magic-link` (form → 303 `/login?sent=1`, JSON → `{ok:true}`, invalid email → 400/`?error=invalid_email`, never reveals account existence), `POST /api/auth/google` (303 to provider URL). Shared cookie-bound client extracted to `src/lib/auth/server-client.ts` and reused by `auth/callback/route.ts`. Login page Google button now posts to it. |
 | D15 shipped | `0004_fix_is_admin.sql` — `is_admin()` now reads `auth.jwt() -> 'app_metadata' ->> 'role'`; `docs/03` §4.1 updated; `pnpm db:reset` green with 0004 applied |
+| BE-101 connector seam | `src/lib/connectors/{types,http,registry,index}.ts`: `SourceConnector` (`kind` + `costClass` + async-iterable `fetch(cfg, ctx)`), `fetchJson` owning the docs/04 §5.9 policy, registry that throws naming an unknown `source_kind`. `RunCtx` injects `fetch`/`now`/`sleep`, so 17 new tests run with no network and no real waiting. |
 | Gates | see below |
 | Docker engine re-verified running (was down since 2026-10-04) | `docker version` → Server `29.8.1` |
 | `supabase start` / `db reset` now pass end-to-end | `pnpm db:reset` → "Reset local database."; migrations 0001–0003 applied, seed ran |
@@ -962,15 +963,12 @@ so both layers now agree. Applied to the local stack: `pnpm db:reset` green with
 
 ## Next Phase plan — Phase 1 back-end, in dependency order
 
-1. **BE-301 auth endpoints.** The login page posts to `/api/auth/magic-link`, which does not exist
-   — auth is currently a dead end. Magic-link request, OAuth redirect, session refresh middleware.
-   *Suggested tools:* `supabase` skill (auth patterns), Context7 `query-docs` for `@supabase/ssr`
-   (exact API has moved between versions — do not code it from memory), `webapp-testing` (login →
-   callback → session cookie → feed) once the routes exist.
-2. **Decide D15** (above) and, if approved, migration `0004_fix_is_admin.sql` + RLS re-verification.
-   *Suggested tools:* `supabase-postgres-best-practices` skill for the policy-function review,
-   Supabase MCP `apply_migration` + `list_policies`/advisors to prove the change on local.
-3. **BE-101 connector interface & registry**, then BE-102 (Greenhouse/Lever/Ashby).
+1. ~~**BE-301 auth endpoints**~~ **done this session** (see above). Remaining in its scope: OTP
+   rate-limiting is still BE-303, and the flow is unverified against a live session until a real
+   auth round-trip is exercised.
+2. ~~**D15**~~ **done this session.**
+3. ~~**BE-101 connector interface & registry**~~ **done this session.** Next is **BE-102**
+   (Greenhouse / Lever / Ashby) against the seam just built.
    *Suggested tools:* Firecrawl MCP (`firecrawl_scrape`/`firecrawl_map`) to record real API
    responses as test fixtures *before* writing the clients — fixtures, never live calls in CI;
    Context7 for each vendor API's current response shape.
