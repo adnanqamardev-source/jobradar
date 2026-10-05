@@ -130,7 +130,7 @@ No styling or UI components are built here. Work is completed when automated uni
 | ID | Title | Origin Ticket | Priority | Focus |
 |---|---|---|---|---|
 | **BE-301** | Magic Link & OAuth Auth Endpoints | `AUT-001`, `AUT-002` | MUST | Server-side auth handlers, PKCE callback, cookie manager (`httpOnly`). |
-| **BE-302** | Session Helpers & Route Guards | `AUT-003`, `AUT-004` | MUST | `requireUser()`, `requireAdmin()`, admin bootstrap script via `ADMIN_EMAILS`. |
+| **BE-302** | Session Helpers & Route Guards | `AUT-003`, `AUT-004` | MUST | `requireUser()`, `requireAdmin()`, admin bootstrap script via `ADMIN_EMAILS`. **Completed 2026-10-05:** `requireUser()`/`requireAdmin()` in `src/lib/auth/require-user.ts` (lazy env import, fails closed, role from `app_metadata.role`), `createUserClient()` in `src/lib/db/user-client.ts` (anon key + caller JWT). Tests in `tests/unit/auth-guard.test.ts` (8 cases). |
 | **BE-303** | OTP Verification Backend | `AUT-005` | SHOULD | 6-digit code verification endpoint with rate-limiting. |
 | **BE-304** | Profile & Preferences Mutations | `ONB-002..005`, `ONB-006` | MUST | Server Actions for updating titles, skills, logistics, dealbreakers. |
 | **BE-305** | Feed Actions Backend | `FED-002` | MUST | Server Actions for Save, Dismiss, and Mark Applied (idempotent). |
@@ -144,7 +144,7 @@ No styling or UI components are built here. Work is completed when automated uni
 | **BE-313** | Account Data Export & Deletion | `ADM-005` | SHOULD | Streamed JSON export and cascading user account purge. |
 | **BE-314** | Résumé Upload, Storage & RLS | `ONB-008` | MUST | Private `resumes` bucket, `resumes` table, owner-only RLS on table **and** `storage.objects`. **Added 2026-10-04. Partially delivered:** `0002_resumes.sql` + `src/lib/storage/resumes.ts` + `src/lib/db/user-client.ts` complete. **`supabase db reset` never run — unverified.** |
 | **BE-315** | Résumé Parsing & Extraction | `ONB-009` | MUST | PDF/DOCX → text → `ExtractedProfile`, rule-based default, LLM fallback opt-in and queue-only. **Added 2026-10-04. Partially delivered:** `src/lib/resume/*` complete and unit-tested (176 tests). **PDF/DOCX text extraction is untested** — no fixtures, and `pdfjs-dist` bundling in a server action is unproven. |
-| **BE-316** | Profile Bootstrap from Résumé | `ONB-010` | MUST | Map `ExtractedProfile` → onboarding prefill; review-before-apply, never auto-save. **Added 2026-10-04. Partially delivered:** `src/lib/resume/bootstrap.ts` (pure, tested) + the three Server Actions. **Actions are blocked at `requireUser()` until BE-302 exists** — they throw rather than fall back to the service role. See [03 §4.2a](./03-security-and-access.md#42a-uploaded-rsum-files--why-this-table-gets-extra-scrutiny). |
+| **BE-316** | Profile Bootstrap from Résumé | `ONB-010` | MUST | Map `ExtractedProfile` → onboarding prefill; review-before-apply, never auto-save. **Added 2026-10-04. Partially delivered:** `src/lib/resume/bootstrap.ts` (pure, tested) + the three Server Actions. **Actions are blocked at `requireUser()` until BE-302 exists** — they throw rather than fall back to the service role. See [03 §4.2a](./03-security-and-access.md#42a-uploaded-rsum-files--why-this-table-gets-extra-scrutiny). **Unblocked 2026-10-05:** BE-302 landed (`requireUser()`/`requireAdmin()`/`createUserClient()`); the three actions now resolve the caller's JWT and run under RLS. Still unverified end-to-end until a live auth session exists (BE-301). |
 
 ---
 

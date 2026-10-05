@@ -6,14 +6,28 @@ create extension if not exists vector;
 create extension if not exists pg_cron;
 create extension if not exists pg_trgm;
 
--- Create auth schema for Supabase compatibility (foreign keys reference auth.users)
-create schema if not exists auth;
-create table if not exists auth.users (
-  id uuid primary key default gen_random_uuid(),
-  email text unique,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
+-- Create auth schema/users only when absent. The real Supabase stack (local or remote)
+-- already provides schema auth and auth.users, and the migration role there has no
+-- CREATE privilege on that schema — an unconditional `create table` fails the whole
+-- migration with SQLSTATE 42501. Only the plain docker-compose Postgres path (which has
+-- no auth schema at all) should take the CREATE branch.
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.tables
+    where table_schema = 'auth' and table_name = 'users'
+  ) then
+    execute 'create schema if not exists auth';
+    execute $sql$
+      create table auth.users (
+        id uuid primary key default gen_random_uuid(),
+        email text unique,
+        created_at timestamptz default now(),
+        updated_at timestamptz default now()
+      )
+    $sql$;
+  end if;
+end $$;
 
 -- -------------------------------------------------------------------
 -- Local development only: mock auth.* functions

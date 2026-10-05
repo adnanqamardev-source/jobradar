@@ -83,12 +83,11 @@ export async function bootstrapFromResume(
     // Validate input
     const { resumeId } = bootstrapFromResumeRequestSchema.parse(input);
 
-    // BLOCKED: needs BE-302 (`requireUser()`) to resolve the caller's real JWT.
-    // `createUserClient` throws until then, and this action deliberately has no
-    // service-role fallback — that would bypass the `resumes_*_own` RLS policies and
-    // make every row in the table readable by every caller.
+    // BE-302 landed: requireUser resolves the caller's real JWT, and createUserClient
+    // scopes every query below through RLS — the deliberate service-role fallback never
+    // happened.
     const user = await requireUser();
-    const supabase = createUserClient(user.accessToken);
+    const supabase = await createUserClient(user.accessToken);
 
     // Load the resume record (RLS will enforce ownership).
     // The client is untyped, so the awaited query is `any`; cast once to a narrow

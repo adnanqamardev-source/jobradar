@@ -14,6 +14,12 @@ import prettierConfig from "eslint-config-prettier";
 // config. One policy, one home. See docs/02 §4 rule 3.
 export const SERVICE_ROLE_ALLOWED = [
   "src/lib/db/admin.ts",
+  // user-client.ts is the anon-key, user-JWT factory. It imports `@supabase/supabase-js`
+  // directly because the ESLint rule would otherwise force every client factory through
+  // the service-role module — the exact privilege mixing the rule exists to prevent.
+  // It is named `*-client` and reachable from Server Actions on purpose; it holds no
+  // service key.
+  "src/lib/db/user-client.ts",
   "src/lib/queue/**",
   "src/app/api/cron/**",
   "src/app/api/webhooks/**",
@@ -89,7 +95,7 @@ export default tseslint.config(
             {
               name: "@supabase/supabase-js",
               message:
-                "Service-role access must go through lib/db/admin.ts. Direct imports are allowed only in lib/queue/**, api/cron/**, api/webhooks/**, scripts/**, and tests/**.",
+                "Service-role access must go through lib/db/admin.ts; user-scoped calls must go through lib/db/user-client.ts. Direct imports are allowed only in those two factories, lib/queue/**, api/cron/**, api/webhooks/**, scripts/**, and tests/**.",
             },
           ],
           patterns: [

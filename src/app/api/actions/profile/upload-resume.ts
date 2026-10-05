@@ -75,13 +75,12 @@ export async function uploadResume(
       };
     }
 
-    // BLOCKED: needs BE-302 (`requireUser()`) to resolve the caller's real JWT and id.
-    // Both must come from the verified session. A hardcoded id matches no RLS policy
-    // (they compare against `auth.uid()`), and a service-role client would bypass the
-    // check entirely — so this path fails closed rather than half-working.
+    // BE-302 landed: both the id and the JWT come from the verified session. A
+    // hardcoded id matches no RLS policy, and a service-role client would bypass the
+    // check entirely — so there is still no fallback path here.
     const user = await requireUser();
     const userId = user.id;
-    const supabase = createUserClient(user.accessToken);
+    const supabase = await createUserClient(user.accessToken);
 
     // Create resume record.
     // See `SingleResult` in bootstrap-from-resume.ts: the client is untyped,

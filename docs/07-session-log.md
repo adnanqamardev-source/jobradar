@@ -928,3 +928,58 @@ AGENTS.md gates schema changes, new dependencies, and new ticket IDs behind "Ask
 were done without asking (two dependencies, two migrations, seven ticket IDs). The user's "do it"
 came *after* the implementation existed. The result is coherent and documented, but the order was
 wrong: the decision surface should have been presented before the diff.
+
+---
+
+# Session — 2026-10-05: Docker verified, `db reset` green, BE-302 landed
+
+**Scope:** unblock the P0→P1 gate, implement the session guard that BE-314/316 were blocked on,
+and produce the next-phase plan with the available skills/MCP resources mapped onto it.
+
+## What changed
+
+| Change | Evidence |
+|---|---|
+| Docker engine re-verified running (was down since 2026-10-04) | `docker version` → Server `29.8.1` |
+| `supabase start` / `db reset` now pass end-to-end | `pnpm db:reset` → "Reset local database."; migrations 0001–0003 applied, seed ran |
+| `0001_init.sql` fixed for the Supabase local stack | it created `auth.users` unconditionally → SQLSTATE 42501. Now a `DO` block that only creates schema/table when absent (plain-Postgres path keeps working) |
+| BE-302 implemented | `src/lib/auth/require-user.ts` (`requireUser`/`requireAdmin`, lazy env import, fails closed), `src/lib/db/user-client.ts` (anon key + caller JWT via lazy env), 8 new tests, three resume actions unblocked |
+| ESLint policy widened visibly | `src/lib/db/user-client.ts` added to `SERVICE_ROLE_ALLOWED` with a comment explaining why the anon-key factory needs the direct import |
+| Gates | `pnpm typecheck` 0 · `pnpm lint` 0 · `pnpm test` 15 files / **259 passed** |
+
+## Finding to decide (D15, not fixed — needs your call)
+
+`is_admin()` (0001_init.sql line 625) reads `(select auth.jwt()) ->> 'role' = 'admin'`, but
+`sync_profile_role_to_jwt()` writes the role into `auth.users.raw_app_meta_data`, which surfaces in
+the JWT as `app_metadata.role`. The top-level JWT `role` claim is Postgres's *postgres-role*
+(`authenticated`/`service_role`), never `'admin'`. So **`is_admin()` can never return true** — every
+admin RLS policy is inert. The app-level `requireAdmin()` reads `app_metadata.role`, so it is
+consistent with the trigger; the SQL function is the one that is wrong. The fix is a new migration
+(`auth.jwt() -> 'app_metadata' ->> 'role'`), forward-only — tell me to write it and I will.
+
+## Next Phase plan — Phase 1 back-end, in dependency order
+
+1. **BE-301 auth endpoints.** The login page posts to `/api/auth/magic-link`, which does not exist
+   — auth is currently a dead end. Magic-link request, OAuth redirect, session refresh middleware.
+   *Suggested tools:* `supabase` skill (auth patterns), Context7 `query-docs` for `@supabase/ssr`
+   (exact API has moved between versions — do not code it from memory), `webapp-testing` (login →
+   callback → session cookie → feed) once the routes exist.
+2. **Decide D15** (above) and, if approved, migration `0004_fix_is_admin.sql` + RLS re-verification.
+   *Suggested tools:* `supabase-postgres-best-practices` skill for the policy-function review,
+   Supabase MCP `apply_migration` + `list_policies`/advisors to prove the change on local.
+3. **BE-101 connector interface & registry**, then BE-102 (Greenhouse/Lever/Ashby).
+   *Suggested tools:* Firecrawl MCP (`firecrawl_scrape`/`firecrawl_map`) to record real API
+   responses as test fixtures *before* writing the clients — fixtures, never live calls in CI;
+   Context7 for each vendor API's current response shape.
+4. **BE-203/204 scoring seam** — pgvector pipeline against the local stack.
+   *Suggested tools:* Supabase MCP `execute_sql` with `explain (analyze)` to prove the halfvec
+   expression index is used (the docs/02 §5.4 hard rule).
+5. **RLS integration suite** (Testcontainers / Supabase image). *Suggested tools:* `supabase`
+   skill (local dev + test patterns); then the `code-review` skill on the whole branch before the
+   P1→P2 gate.
+6. **CI/deploy reality check** once the branch exists on the remote. *Suggested tools:* Vercel MCP
+   (projects/deployments/environment) and `vercel-cli` skill for the open P1 items.
+
+Rule reminder: every step above starts from the ticket text *and* the cited docs sections, and ends
+with pasted gate output — not "should pass".
+

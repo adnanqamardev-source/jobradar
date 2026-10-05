@@ -91,11 +91,10 @@ export async function processResume(input: { resumeId: string }): Promise<Proces
   try {
     const { resumeId } = z.object({ resumeId: z.string().uuid() }).parse(input);
 
-    // BLOCKED: needs BE-302 (`requireUser()`) to resolve the caller's real JWT.
-    // This action reads and writes a resume row, so it must run as the user whose
-    // row it is — a service-role client would bypass the ownership policy.
+    // BE-302 landed: requireUser resolves the caller's real JWT; createUserClient
+    // scopes every query through RLS — no service-role path exists here.
     const user = await requireUser();
-    const supabase = createUserClient(user.accessToken);
+    const supabase = await createUserClient(user.accessToken);
 
     // Load the resume record (RLS will enforce ownership).
     // See `SingleResult` in bootstrap-from-resume.ts: the client is untyped,
