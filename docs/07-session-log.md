@@ -1156,6 +1156,9 @@ The guard is **opt-in**. A caller that omits `expectedUpdatedAt` keeps the old u
 the onboarding wizard is unaffected; `/settings` is the caller that must send it. This is deliberate -
 making it mandatory would have broken every existing caller for no security gain.
 
+**Correction, same day:** that guard did not actually work. `profiles` had no `updated_at` trigger, so
+the column never moved and the check always matched. Fixed by `0006` — see the next entry.
+
 ### Also fixed while in there
 
 - `edit_conflict` added to `src/lib/errors/codes.ts`. Upstream error text is still never surfaced to
@@ -1235,3 +1238,43 @@ not a wiring one.
 Untouched from the earlier list: `onboarding_completed` write (ONB-005 Finish), rate
 limiting (`lib/ratelimit.ts` does not exist), title normalisation + `.min(1)`, the
 currency allowlist, the shared company-slug helper with E3, and free-text pending skills.
+## Migration 0006 — the concurrency guard now actually works 2026-10-06
+
+Fixed what the integration test found in the previous entry.
+
+`supabase/migrations/0006_profiles_updated_at.sql` adds `profiles_updated_at`, a BEFORE UPDATE trigger
+on `profiles` calling `update_updated_at_column()` — **the same function `resumes` has used since
+`0002`**. Deliberately not a new function: two functions doing one job is how `profiles` got missed
+the first time. It also backfills `where updated_at = created_at`, since pre-migration rows carry an
+insert-time `now()` that is indistinguishable from "never written since".
+
+Forward-only, as always: new file, `0001`..`0005` untouched.
+
+### Verification
+
+`pnpm db:reset` green through `0006`. The stale-`updated_at` test now passes for real: tab one's write
+lands, tab two's stale write returns zero rows, and tab one's value survives.
+
+Mutation-checked by dropping the trigger from the live DB — **2 of 8 tests fail** — then restored via a
+clean `db:reset` rather than by re-applying the trigger by hand, so the reset path stays the thing
+actually exercised. All 8 green again.
+
+`pnpm typecheck` 0, `pnpm lint` 0, `pnpm test` 25 passed / 8 skipped (integration skips without the env
+vars), `migration-drift` and `doc-drift` green.
+
+The intentionally-failing pin from the last entry is now a normal regression test, and the manual
+`updated_at` bump I had put in the stale test is gone — the trigger does it.
+
+### Not done
+
+Still needs your decision, both schema-level:
+
+- **`0006` is applied to local only.** Production is at `0005`; the guard is inert there until you say
+  so. Note the backfill `update`s every profile row, so it is not a no-op on production.
+- **`rescore_profile` enqueue** is still blocked: `task_queue` is RLS-enabled with no client policies,
+  so a user action cannot insert. Needs either a `security definer` RPC or service-role from a user
+  action, and the latter breaks the repo's "never service-role for user-facing work" rule.
+
+Untouched: `onboarding_completed` write, rate limiting (`lib/ratelimit.ts` does not exist), title
+normalisation + `.min(1)`, currency allowlist, shared company-slug helper with E3, free-text pending
+skills.

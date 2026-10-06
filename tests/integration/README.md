@@ -29,15 +29,14 @@ Never paste that value anywhere, and never point these tests at production. The
 suite refuses to run unless the URL is `127.0.0.1` / `localhost`, and everything it
 creates is tagged `integration-be304-` and removed in `afterAll`.
 
-## Known failure
+## What these tests already caught
 
-`profile-mutations.db.test.ts` has one **expected-to-fail** test,
-`BUG: profiles.updated_at does not move on UPDATE`. `profiles` has no
-`updated_at` trigger (only a `now()` default, which applies to INSERT) — unlike
-`resumes`, which has `resumes_updated_at`. So the optimistic-concurrency guard in
-`lib/db/profile-update.ts` can never detect a conflict: `updated_at` is identical
-before and after a write.
+`profiles.updated_at` never moved on UPDATE. `profiles` had no `updated_at` trigger
+(only a `now()` default, which applies to INSERT) - unlike `resumes`, which has had
+`resumes_updated_at` since `0002`. The optimistic-concurrency guard in
+`lib/db/profile-update.ts` scopes its UPDATE by that column, so it always matched and
+two tabs silently clobbered each other.
 
-It is left failing on purpose, as a pin on the fix. Adding migration `0006`
-(`profiles_updated_at` BEFORE UPDATE trigger) turns it green. Do not "fix" it by
-deleting or skipping the test.
+Fixed by migration `0006_profiles_updated_at.sql`. The regression pin is
+`moves updated_at on UPDATE, so the guard has a value to conflict against` - if a
+future migration drops the trigger, that test is what notices.

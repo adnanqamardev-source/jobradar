@@ -138,19 +138,15 @@ admin = createClient(URL!, SERVICE_ROLE!, {
       .single();
     if (readError) throw new Error(readError.message);
 
-    // Move `updated_at` forward explicitly, standing in for the missing
-    // `profiles_updated_at` trigger. See the note on the companion test below.
-    await admin
+    // Tab one writes, scoped to the updated_at it read.
+    const first = await admin
       .from("profiles")
-      .update({ city: "Bengaluru", updated_at: new Date(Date.now() + 1000).toISOString() })
+      .update({ city: "Bengaluru" })
       .eq("id", id)
+      .eq("updated_at", read.updated_at)
       .select();
-    const { data: afterFirst } = await admin
-      .from("profiles")
-      .select("updated_at")
-      .eq("id", id)
-      .single();
-    expect(afterFirst?.updated_at).not.toBe(read.updated_at);
+    expect(first.error).toBeNull();
+    expect(first.data).toHaveLength(1);
 
     // Tab two writes using the `updated_at` it read earlier. Same shape the action uses.
     const second = await admin
@@ -170,20 +166,18 @@ admin = createClient(URL!, SERVICE_ROLE!, {
     expect(final?.city).toBe("Bengaluru");
   });
 
-  it("BUG: profiles.updated_at does not move on UPDATE — the guard cannot work", async () => {
-    const id = await seedUser("no-trigger");
+  it("moves updated_at on UPDATE, so the guard has a value to conflict against", async () => {
+    const id = await seedUser("trigger-moves");
     const before = await admin.from("profiles").select("updated_at").eq("id", id).single();
 
-    // `resumes` has a `resumes_updated_at` BEFORE UPDATE trigger. `profiles` has none —
-    // `updated_at` only has a `now()` default, which applies to INSERT.
     await admin.from("profiles").update({ city: "Chennai" }).eq("id", id);
 
     const after = await admin.from("profiles").select("updated_at").eq("id", id).single();
 
-    // Fails today. This is the real state of the DB, not a test artefact: until a
-    // `profiles_updated_at` trigger exists, `updateOwnProfile`'s guard always matches
-    // and the two-tab case silently clobbers — exactly the pre-`2def404` behaviour.
-    // Fix is migration 0006. Pinned here so the fix can't be forgotten.
+    // Migration `0006` (`profiles_updated_at`). Before it, `profiles` had no trigger —
+    // only a `now()` default applying to INSERT — so this was byte-identical and
+    // `updateOwnProfile`'s guard could never fire. Kept as a regression pin: if a
+    // future migration drops the trigger, this is what notices.
     expect(after.data?.updated_at).not.toBe(before.data?.updated_at);
   });
 
