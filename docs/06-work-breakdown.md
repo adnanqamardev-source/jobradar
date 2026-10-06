@@ -118,7 +118,7 @@ No styling or UI components are built here. Work is completed when automated uni
 | **BE-201** | Hard Gate Filters | `SCR-001` | MUST | **DONE** — `gates.ts`: 5 gates, machine-readable reasons, never fires on missing data. + shared `utils/company-slug.ts` |
 | **BE-202** | Deterministic Rule-Based Scorer | `SCR-002` | MUST | **DONE** — `weights.ts` + `rules.ts`: 6 components, unknown-is-never-0, breakdown always present. SCR-007 flag override deferred |
 | **BE-203** | pgvector Embedding Pipeline | `SCR-003` | MUST | OpenRouter `nvidia/nemotron-3-embed-1b:free` (2048-dim) batching and cosine distance calculation. |
-| **BE-204** | Score Composition & Persistence | `SCR-004` | MUST | Blends rule + semantic score into `job_scores`, maintains `v_ranked_jobs`. |
+| **BE-204** | Score Composition & Persistence | `SCR-004` | MUST | **DONE** — `scoring/index.ts`: pure `composeScore` + service-role `persistScore` upsert on `(user_id,job_id)`; gated jobs written at 0 with reasons. Feed query (BE-306) still open |
 | **BE-205** | Batch Profile Rescorer | `SCR-005` | MUST | Requeues user's jobs asynchronously on preference update. |
 | **BE-206** | LLM Rationale Generator | `SCR-006` | SHOULD | Structured prompt against an OpenRouter `:free` chat model generating 2-sentence fit + gaps rationale. |
 | **BE-207** | Dynamic Weight Flags | `SCR-007` | NICE | Flag-overridable weights without code deployments. |

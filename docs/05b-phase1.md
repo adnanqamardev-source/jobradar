@@ -525,11 +525,37 @@ named constant because that is the single value SCR-007 needs to override.
 Compose `final = 0.5·rule + 0.5·semantic`, write `job_scores` with `breakdown`, `model_version`, `scored_at`.
 
 **Done when:**
-- [ ] Unique `(user_id, job_id)`; re-scoring upserts rather than duplicating
-- [ ] Gated jobs get `final_score = 0` with `gate_result` populated
-- [ ] `breakdown` always present — the UI never shows a bare number (C3 / [04 §3.4](./04-frontend-specification.md))
-- [ ] `v_ranked_jobs` returns these rows for the feed query
-- [ ] Coverage: ≥98% of active jobs have a score for an active profile
+- [x] Unique `(user_id, job_id)`; re-scoring upserts rather than duplicating
+- [x] Gated jobs get `final_score = 0` with `gate_result` populated
+- [x] `breakdown` always present — the UI never shows a bare number (C3 / [04 §3.4](./04-frontend-specification.md))
+- [ ] `v_ranked_jobs` returns these rows for the feed query — feed query is BE-306, not started
+- [ ] Coverage: ≥98% of active jobs have a score for an active profile — `coverage()` shipped; nothing produces jobs yet
+
+**BE-204 delivered** (`src/lib/scoring/index.ts`, 24 tests). Split in two on purpose:
+`composeScore` is pure and unit-testable, `persistScore` is the only function that
+touches Supabase and takes its client by injection.
+
+Two decisions worth recording:
+
+| Question | Decision | Why |
+|---|---|---|
+| Do gated jobs get a row? | **yes** — `final_score = 0` with `gate_result` populated, plus the rule score as evidence | that row is the only record of *why* a job is absent from a feed. Skipping the write makes the exclusion invisible and unanswerable. "HIDE from feed" is the feed query's job, not the writer's. |
+| `semanticScore` is `null` | reweight to `rule` alone, **not** 0 | a 0 would rank every not-yet-embedded job below every embedded one, so a transient OpenRouter failure would empty the feed. [04 §5.9](./04-frontend-specification.md) requires an embedding failure not to block the feed. |
+
+`persistScore` deliberately omits `explanation` from the upsert: SCR-006's rationale is
+Pro-only and separately metered, and including it as `null` would delete a still-valid
+rationale on every profile edit.
+
+**Service role is required, not incidental.** `job_scores` has a SELECT-only RLS policy
+(`job_scores_owner_select`, `0001_init.sql:652`) — there is no INSERT/UPDATE policy for a
+user, so a user-scoped client cannot write a score. That is the right shape: scoring reads
+one user's whole profile and writes on their behalf. The client is therefore passed in
+rather than constructed here, so the caller is visibly choosing the privilege.
+
+A `clamp01` (0–1) was briefly applied to the 0–100 blended score, which clamped every
+score to exactly `1`. It survived the gate run because the tests asserted against the same
+wrong scale; it was found by printing an actual composed score. `clamp100` now exists as a
+distinctly-named function.
 
 ---
 
