@@ -1338,3 +1338,61 @@ entry rather than assumed.
 exist), title normalisation + `.min(1)`, currency allowlist, shared company-slug helper with E3,
 free-text pending skills. ONB-006's FE half: "Rescoring your feed…", the completion toast, and
 passing `expectedUpdatedAt`.
+
+**Correction to the entry above:** `0007`/`0008` were local only at that point; both were applied to
+production later the same session after review. See the final entry.
+
+---
+
+## 0007 + 0008 applied to production 2026-10-06 (final)
+
+Applied after the local work was reviewed. Pre-flight: `task_queue` empty (0 rows), neither the
+function nor the coalescing index existed.
+
+- `20261006130247` `enqueue_rescore` (0007)
+- `20261006130410` `restrict_rescore_to_authenticated` (0008)
+
+Production is now at 8 migrations: `0001`..`0006` plus these two.
+
+### Verified on production, not assumed
+
+| Property | Value |
+|---|---|
+| `prosecdef` (security definer) | true |
+| `search_path` | `""` — no search-path hijack |
+| `pronargs` | 0 — nothing to forge |
+| forces `auth.uid()` | true |
+| `anon` EXECUTE | **false** |
+| `authenticated` EXECUTE | true |
+| coalescing index | present |
+
+Behaviour, under a simulated authenticated principal, inside a transaction that was rolled back:
+
+- three calls produced **one** task row;
+- payload was `{"profile_id": "00000000-0000-0000-0000-0000000000ff"}`, forced to the caller;
+- `set role anon` → `ERROR: 42501 permission denied for function enqueue_rescore_profile`.
+
+That last check is the one worth remembering: on local the `anon` grant was **silent**, so it took
+an ACL dump to catch. On production `0008` did the right thing, and `anon` is refused at the
+permission layer before any function logic runs.
+
+Final state: `task_rows_left: 0` (the rollback left nothing behind), 1 profile untouched,
+`profiles_updated_at` still present.
+
+### Environment note
+
+Docker Desktop lives at `C:\Users\adnan\AppData\Local\Programs\DockerDesktop`, not
+`C:\Program Files\Docker` — which is why an early check this session reported it absent. The Supabase
+MCP points at **production**, not local; it was used read-only plus `apply_migration` throughout,
+while the integration tests talk to `127.0.0.1:54321`.
+
+### Rule 5 added after an encoding loss
+
+A docs-only commit reported `386 insertions, 344 deletions` for roughly 30 added lines. A
+`Get-Content -Raw` + `Set-Content` round-trip had rewritten `docs/07-session-log.md` at a different
+encoding, turning every em-dash in the file into `?`. It was pushed before being caught, and
+reverting also lost the intended appends — which is why this note needed restoring.
+
+This is now **Rule 5** in AGENTS.md plus a `notes.md` hard rule: review the diff before *every*
+push and check the line counts against the change. A docs append is roughly additive; a large delete
+ratio means the file was rewritten, not edited.

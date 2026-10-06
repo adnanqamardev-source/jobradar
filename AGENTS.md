@@ -33,6 +33,7 @@ Phase 0 Foundation → Phase 1 Back-End → Phase 2 Front-End functional → Pha
 - Update every doc the change touched, in the **same** commit.
 - Verify before asserting. Run the check, then state the finding. Never the reverse.
 - Paste gate output as evidence. "Should pass" is not a result.
+- **Review the diff before every push** — `git diff` and `git show`, then fix what you find. Every iteration, not just at milestones. See Rule 5.
 
 ### Ask first
 - New dependency, schema change, env var, route, or ticket ID.
@@ -66,6 +67,7 @@ Verify in that order. Claim done only with pasted output.
 | Rule 2 | One question, plain text — never loop the question tool |
 | Rule 3 | Scratch files deleted in the same session; `docs/02` §4 maps every production path |
 | Rule 4 | Finish with evidence, or say you did not finish |
+| Rule 5 | Review the diff before every push — see [notes.md](./notes.md) |
 
 **Tooling notes** (FND-001, settled): env loading via Node's `--env-file=.env.local` (no `dotenv`); vitest config is `vitest.config.mts` with top-level `fileParallelism: false`; ESLint flat config only; `next-env.d.ts` is ignored.
 
