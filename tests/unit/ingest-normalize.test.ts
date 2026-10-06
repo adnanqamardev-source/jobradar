@@ -158,6 +158,7 @@ describe("normaliseJob", () => {
       companyDomain: "acme.com",
       title: "Senior Software Engineer",
       descriptionText: "We are looking for a senior engineer...",
+      descriptionHtml: null, // carried by RawJob; the sanitiser in normalize.ts nulls it
       locationRaw: "Remote – India",
       workMode: "remote",
       employmentType: "full_time",
@@ -191,6 +192,7 @@ describe("normaliseJob", () => {
       companyDomain: "globaltech.com",
       title: "Software Engineer",
       descriptionText: "Join our distributed team...",
+      descriptionHtml: null, // carried by RawJob; the sanitiser in normalize.ts nulls it
       locationRaw: "Remote – Anywhere",
       workMode: "remote",
       employmentType: "full_time",
@@ -221,6 +223,7 @@ describe("normaliseJob", () => {
       companyDomain: null,
       title: "Developer",
       descriptionText: null,
+      descriptionHtml: null,
       locationRaw: null,
       workMode: null,
       employmentType: null,

@@ -1,0 +1,36 @@
+{
+  "results": [
+    {
+      "id": "3001234567",
+      "redirect_url": "https://www.adzuna.com/listing/3001234567",
+      "title": "Machine Learning Engineer",
+      "display_title": "Machine Learning Engineer, London",
+      "description": "<p>Build <strong>ML</strong> systems.</p>",
+      "created": "2026-09-29T10:00:00Z",
+      "salary_min": 85000,
+      "salary_max": 110000,
+      "salary_currency": "gbp",
+      "salary_label": "£85,000 - £110,000 per year",
+      "company": { "display_name": "Hooli" },
+      "location": { "display_name": "London", "country": "GB" }
+    },
+    {
+      "id": "3007654321",
+      "redirect_url": "https://www.adzuna.com/listing/3007654321",
+      "title": "Support Specialist",
+      "display_name": null,
+      "description": "<p>Support customers.</p>",
+      "created": "2026-09-20T09:00:00Z",
+      "company": { "display_name": "Sterling Cooper" },
+      "location": { "display_name": "Remote", "country": "US" }
+    },
+    {
+      "id": "3009999999",
+      "title": "Unidentified Aggregated Record",
+      "description": "<p>No redirect_url on this record.</p>",
+      "created": "2026-09-19T09:00:00Z",
+      "company": { "display_name": "No Link Co" },
+      "location": { "display_name": "Nowhere" }
+    }
+  ]
+}

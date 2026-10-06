@@ -1,0 +1,32 @@
+{
+  "data": [
+    {
+      "slug": "backend-engineer-muenchen",
+      "company_name": "Nachtblau",
+      "title": "Backend Engineer",
+      "description": "<p>Backend role with <strong>Python</strong> and Django.</p>",
+      "remote": true,
+      "url": "https://www.arbeitnow.com/view/backend-engineer-muenchen",
+      "location": "Germany",
+      "tags": ["python", "django"],
+      "job_types": ["Full time"],
+      "created_at": 1759046400
+    },
+    {
+      "slug": "site-reliability-engineer",
+      "company_name": "Ostwerk",
+      "title": "Site Reliability Engineer",
+      "description": "<p>Keep the platform up.</p>",
+      "remote": false,
+      "url": "https://www.arbeitnow.com/view/site-reliability-engineer",
+      "location": "Berlin, Germany",
+      "tags": ["sre"],
+      "job_types": ["Full time"],
+      "created_at": 1756473600000
+    }
+  ],
+  "meta": {
+    "currentPage": 1,
+    "totalPages": 1
+  }
+}

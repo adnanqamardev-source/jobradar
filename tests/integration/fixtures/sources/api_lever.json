@@ -1,0 +1,30 @@
+[
+  {
+    "id": "9f1c2b44-0e3a-4f21-9a1e-5b6c7d8e9f01",
+    "text": "Staff Frontend Engineer",
+    "hostedUrl": "https://jobs.lever.co/acme/staff-frontend-9f1c2b44",
+    "applyUrl": "https://jobs.lever.co/acme/apply/9f1c2b44",
+    "createdAt": 1759046400000,
+    "descriptionPlain": "Own the frontend platform.",
+    "descriptionHtml": "<p>Own the <em>frontend platform</em>.</p>",
+    "categories": {
+      "location": "Bengaluru, India",
+      "commitment": "Full-time",
+      "team": "Engineering"
+    },
+    "lists": [
+      { "text": "Requirements", "content": "React, TypeScript" }
+    ]
+  },
+  {
+    "id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+    "text": "Data Analyst",
+    "hostedUrl": "https://jobs.lever.co/acme/data-analyst-1a2b3c4d",
+    "createdAt": 1756473600000,
+    "descriptionPlain": "Own reporting.",
+    "categories": {
+      "location": "Remote - India",
+      "commitment": "Full-time"
+    }
+  }
+]

@@ -1,0 +1,21 @@
+{
+  "jobs": [
+    {
+      "id": 40281,
+      "title": "Senior Backend Engineer",
+      "absolute_url": "https://boards.greenhouse.io/acme/jobs/40281",
+      "content": "<p>We are hiring a <strong>Senior Backend Engineer</strong> to work on our ingestion platform.</p><ul><li>Go</li><li>Postgres</li></ul>",
+      "updated_at": "2026-09-28T10:15:00Z"
+    },
+    {
+      "id": "40282",
+      "title": "Product Designer",
+      "absolute_url": "https://boards.greenhouse.io/acme/jobs/40282",
+      "content": "<p>Design end-to-end product experiences.</p>",
+      "updated_at": "2026-09-20T08:00:00Z"
+    }
+  ],
+  "company": {
+    "name": "Acme Corp"
+  }
+}

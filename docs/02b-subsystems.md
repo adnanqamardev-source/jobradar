@@ -43,13 +43,75 @@ export interface RawJob {
 
 Firecrawl usage rules: always `formats: ["json"]` with an explicit extraction schema matching `RawJob`; `onlyMainContent: true`; per-source `maxAge` caching to avoid re-crawling unchanged pages; hard daily cap per plan.
 
-**Connector contract tests** run against `tests/integration/fixtures/sources/{kind}.json` — CI never hits live APIs.
+**Connector contract tests** run against `tests/integration/fixtures/sources/{kind}.json` - CI never hits live APIs.
+Eight fixtures, one per connector (`firecrawl_scrape` covers `/scrape`; `/map` and `/search` use
+inline bodies), driven by `tests/unit/connectors-contract.test.ts` through an injected `fetch`
+and a fake clock.
 
-**Where this is implemented (BE-101, 2026-10-05).** `src/lib/connectors/types.ts` holds the
+The contract tests assert the **request** as well as the output. An output-only assertion cannot
+notice a connector that stopped sending `content=true` or `includeCompensation=true`: the
+recorded fixture already contains the body, so such a test would still pass while every posting in
+production arrived empty. Each connector's test therefore pins the URL, method, headers and body it
+built.
+
+A fixture test proves the *mapping* - that the fields 04 §5.2 names arrive in the right `RawJob`
+fields, and that a provider shape change becomes `scrape_parse_failed` rather than a silent zero.
+It cannot prove the provider still returns that shape.
+
+`tests/unit/connectors-url-guard.test.ts` tests the SSRF guard adversarially: the cases are bypass
+attempts, not the happy path, including the obfuscated loopback forms (`0177.0.0.1`,
+`0x7f.0.0.1`, `127.1`, `2130706433`) and the just-outside-the-range addresses an over-broad filter
+would wrongly block.
+
+**Where this is implemented (BE-101..BE-105, 2026-10-06).** `src/lib/connectors/types.ts` holds the
 interface and `HTTP_DEFAULTS`; `http.ts` holds `fetchJson` — the single place a connector may touch
 the network, carrying the §5.9 timeout/retry/error-mapping policy; `registry.ts` maps
-`source_kind` → connector and throws naming the kind when one is missing. Three deliberate choices
-the code depends on:
+`source_kind` → connector and throws naming the kind when one is missing.
+
+The eight connectors are one file each, named for the provider. The seam widened twice to
+accommodate them, and both changes are load-bearing rather than conveniences:
+
+- **`SourceConfig` carries *lists*, because the seed does.** `supabase/seed.sql` seeds one
+  `sources` row per *provider* with `{"boards": []}`, `{"organizations": []}`, `{"urls": []}`,
+  not one row per board. A connector therefore iterates its list. `board` is kept for the
+  single-board case and *wins* when both are set, so a per-company row is not read as "no
+  boards" and returns zero jobs. `companyName` exists because Lever's `/v0/postings/{slug}` and
+  Ashby's `posting-api/job-board/{slug}` return postings with no company field at all; `cfg.name`
+  cannot stand in, because for the seeded rows that is the provider ("Lever"), and every posting
+  would be attributed to Lever and collapse into one company in the dedupe hash.
+- **`RunCtx.onRequest` counts upstream attempts**, which is how `scrape_runs.api_calls` gets
+  its number for cost attribution (04 §5.1). It lives on the context rather than inside `http.ts`
+  because the counter is the *run's* to own — BE-111 writes the row. It counts attempts, not
+  requests: a retry against Adzuna or Firecrawl is a billed call.
+
+Two more seam facts worth stating, because each is a provider quirk rather than a choice:
+
+- **`fetchJson` now takes a `method`/`body`.** Firecrawl's `/scrape`, `/search` and `/map` are
+  all POST with a JSON body carrying the extraction schema; a GET-only helper cannot reach the
+  one integration the docs say to fall back on for everything else.
+- **The job-API timeout is 15s, not the 30s default.** 04 §5.9 tabulates per-integration timeouts:
+  Firecrawl gets 30s because it renders in a headless browser, "Job APIs" get 15s.
+  `HTTP_DEFAULTS.timeoutMs` is the Firecrawl figure, so a connector using the default would sit
+  through two full timeouts and three retries on a dead job API — 90 seconds of a Vercel function
+  before the row is released. Job connectors pass `JOB_API_TIMEOUT_MS`.
+
+**SSRF validation is ours, not Firecrawl's** (03 §6.2 S-05). `url-guard.ts` refuses non-`https`,
+credentials-in-URL, localhost (by name and suffix), and private/reserved IPv4 and IPv6 *before*
+any request is made. Its limit is stated rather than glossed: it is a name/literal check, so a
+public hostname that resolves to a private address is not caught here — closing that needs
+resolution plus address pinning, which is Firecrawl's side of the boundary.
+
+Deliberate non-mappings, each because guessing is worse than unknown:
+
+- Ashby `isRemote: false` and Arbeitnow `remote: false` map to `null`, **not** `"onsite"`. Both
+  providers set the flag false for hybrid roles; asserting `onsite` would hard-fail the
+  `work_mode_mismatch` gate against a user's hybrid preference on the strength of one boolean.
+- USAJOBS claims `salaryPeriod: "year"` only when `RateIntervalCode === "Year"`. An hourly
+  figure read as annual passes every underpaid check.
+- Lever and Ashby employment types and Ashby seniority are left `null`; the enum is closed and
+  a partial mapping drops the unmapped values silently.
+
+Three deliberate choices the code depends on:
 
 - `RawJob` is **not** defined in `connectors/types.ts`. The seam contract puts the schema in
   `src/types/canonical-job.ts` and derives the type from it (§8.1); the module re-exports it.
@@ -147,6 +209,21 @@ Daily `pg_cron` → `send_digest` tasks partitioned by `time_zone` → handler s
 two of its rules are easy to get wrong and expensive to get wrong quietly: the Indian salary
 notation and the India-vs-worldwide remote distinction. `src/lib/ingest/normalize.ts`; every
 function is pure and deterministic.
+
+**Open gap — `description_html` is still discarded (found 2026-10-06).** `normalize.ts` writes
+`descriptionHtml: null` with the comment "Would be populated by HTML sanitiser", so the
+`jobs.description_html` column (02a §5.4) stays NULL for the whole corpus. The sanitiser does not
+exist yet; the intent was always to add one, not to drop the field.
+
+What changed on 2026-10-06 is that the field now survives *up to* this point. `RawJob` had no
+`descriptionHtml` at all, so `rawJobSchema` — a `z.object`, not `.passthrough()` — stripped the key
+from every connector's output. Every connector was fetching the posting body, carrying it, and
+losing it at the seam with no error anywhere. That is the same failure mode as the `v_ranked_jobs`
+column list (§5.9): the schema validates, so nothing looks wrong.
+
+Wiring a sanitiser is deliberately left to a ticket rather than done inline here. Storing provider
+HTML unsanitised is worse than storing none — `description_html` is rendered by FE-108 — so the
+gap is recorded rather than closed by a pass-through.
 
 **Order matters, and it is the opposite of what reads naturally.**
 

@@ -1,0 +1,30 @@
+{
+  "jobs": [
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000001",
+      "title": "Platform Engineer",
+      "jobUrl": "https://jobs.ashbyhq.com/acme/1/platform-engineer",
+      "applyUrl": "https://jobs.ashbyhq.com/acme/1/apply",
+      "publishedAt": "2026-09-25T12:00:00Z",
+      "descriptionPlain": "Build the platform.",
+      "descriptionHtml": "<p>Build the <b>platform</b>.</p>",
+      "isRemote": true,
+      "employmentType": "Full time",
+      "location": { "location": "Remote (India)" },
+      "compensation": {
+        "compensationTierSummary": "$120k – $160k"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000002",
+      "title": "QA Engineer",
+      "jobUrl": "https://jobs.ashbyhq.com/acme/2/qa-engineer",
+      "publishedAt": "2026-09-18T09:30:00Z",
+      "descriptionPlain": "Keep quality high.",
+      "isRemote": false,
+      "employmentType": "Full time",
+      "location": { "location": "London, UK" },
+      "compensation": null
+    }
+  ]
+}

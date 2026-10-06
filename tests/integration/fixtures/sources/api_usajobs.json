@@ -1,0 +1,31 @@
+{
+  "SearchResult": {
+    "SearchResultCount": 2,
+    "SearchResultItems": [
+      {
+        "MatchedObjectId": "DE1234567",
+        "MatchedObjectDescriptor": {
+          "PositionTitle": "Software Engineer, AI",
+          "PositionLocationDisplay": ["Washington, DC", "Remote"],
+          "PositionRemuneration": [
+            { "Value": "$150,000.00 Per Year", "RateIntervalCode": "Year" }
+          ],
+          "DepartmentName": "Department of the Navy",
+          "DatePosted": "2026-09-15T00:00:00Z"
+        }
+      },
+      {
+        "MatchedObjectId": "DE7654321",
+        "MatchedObjectDescriptor": {
+          "PositionTitle": "Data Analyst",
+          "PositionLocationDisplay": ["Austin, TX"],
+          "PositionRemuneration": [
+            { "Value": "$45.00 Per Hour", "RateIntervalCode": "Hour" }
+          ],
+          "DepartmentName": "General Services Administration",
+          "DatePosted": "2026-09-10T00:00:00Z"
+        }
+      }
+    ]
+  }
+}

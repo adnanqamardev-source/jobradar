@@ -119,6 +119,7 @@ describe("connector contract", () => {
       companyDomain: null,
       title: "Engineer",
       descriptionText: null,
+      descriptionHtml: null,
       locationRaw: "Remote",
       workMode: null,
       employmentType: null,

@@ -1,0 +1,37 @@
+{
+  "success": true,
+  "data": {
+    "markdown": "# Careers\n\nWe are hiring.",
+    "json": {
+      "jobs": [
+        {
+          "title": "Senior React Engineer",
+          "companyName": "Hooli",
+          "location": "Remote, India",
+          "workMode": "remote",
+          "salaryRaw": "₹40,00,000 - ₹60,00,000 per year",
+          "postedAt": "2026-09-27T00:00:00Z",
+          "sourceUrl": "https://careers.hooli.com/jobs/senior-react-engineer",
+          "applyUrl": "https://careers.hooli.com/jobs/senior-react-engineer/apply",
+          "descriptionHtml": "<p>Build our <strong>React</strong> app.</p>"
+        },
+        {
+          "title": "Support Lead",
+          "companyName": "Hooli",
+          "location": "Palo Alto, CA",
+          "workMode": "onsite",
+          "sourceUrl": "https://careers.hooli.com/jobs/support-lead"
+        },
+        {
+          "title": "Broken Record With No Title",
+          "companyName": "Hooli"
+        }
+      ]
+    },
+    "metadata": {
+      "statusCode": 200,
+      "sourceUrl": "https://careers.hooli.com/careers",
+      "cached": true
+    }
+  }
+}

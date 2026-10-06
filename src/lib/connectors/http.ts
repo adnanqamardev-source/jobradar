@@ -14,7 +14,11 @@
 import { AppError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
 
-import { HTTP_DEFAULTS, type RunCtx } from "./types";
+import { HTTP_DEFAULTS, JOB_API_TIMEOUT_MS, type RunCtx } from "./types";
+
+// The timeout policy is applied here, so it is offered from here too — a connector that
+// imported its timeout from `./types` would be reaching past the module that enforces it.
+export { JOB_API_TIMEOUT_MS };
 
 const log = logger.child({ module: "connectors/http" });
 
@@ -24,6 +28,27 @@ export interface FetchJsonOptions {
   retries?: number;
   /** Label used in logs and errors — never a URL with credentials in it. */
   label: string;
+  /**
+   * HTTP method. Defaults to GET.
+   *
+   * Firecrawl is the reason this exists: `/scrape`, `/search` and `/map` are all POST with a
+   * JSON body carrying the extraction schema (docs/04 §5.1), so a GET-only helper cannot
+   * reach the one integration the docs say to fall back on for everything else.
+   */
+  method?: "GET" | "POST";
+  /** Request body. Serialised as JSON; requires `method: "POST"`. */
+  body?: unknown;
+}
+
+/**
+ * Join a base URL and a path, tolerating a trailing slash on the base.
+ *
+ * Not string concatenation: a `baseUrl` override ending in `/` — which a test fixture or an
+ * ATS mirror will happily supply — otherwise yields `https://host//v0/postings` and the
+ * provider 404s with no hint that the fault is ours.
+ */
+export function joinUrl(base: string, path: string): string {
+  return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
 /** Combine the caller's signal with a timeout, without mutating either. */
@@ -38,7 +63,7 @@ function isRetryable(status: number): boolean {
 }
 
 /**
- * GET `url` and parse JSON, with timeout, retry and typed failure.
+ * GET or POST `url` and parse JSON, with timeout, retry, metering and typed failure.
  *
  * @throws {AppError} `upstream_timeout` on abort/timeout, `upstream_error` on HTTP or
  *         network failure, `scrape_parse_failed` when the body is not JSON.
@@ -50,6 +75,7 @@ export async function fetchJson<T>(
 ): Promise<T> {
   const timeoutMs = options.timeoutMs ?? HTTP_DEFAULTS.timeoutMs;
   const retries = options.retries ?? HTTP_DEFAULTS.retries;
+  const method = options.method ?? "GET";
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     // A cancelled run must not spend its remaining retries: re-requesting an aborted
@@ -58,12 +84,18 @@ export async function fetchJson<T>(
       throw new AppError("upstream_timeout", { message: `${options.label}: run cancelled` });
     }
 
+    // Counted before the request goes out, so a call that throws still costs quota and
+    // `api_calls` never under-reports. Retries included: a retry is a billed call.
+    ctx.onRequest?.({ url, attempt });
+
     let error: AppError;
     let retryable: boolean;
 
     try {
       const response = await ctx.fetch(url, {
+        method,
         headers: options.headers,
+        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
         signal: signalWithTimeout(ctx, timeoutMs),
       });
 

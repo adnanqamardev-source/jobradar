@@ -1,0 +1,27 @@
+{
+  "job-count": 2,
+  "jobs": [
+    {
+      "id": "11223344",
+      "url": "https://remotive.com/remote-jobs/senior-go-developer-11223344",
+      "title": "Senior Go Developer",
+      "company_name": "Globex",
+      "candidate_required_location": "Worldwide",
+      "publication_date": "2026-09-30",
+      "description": "<p>Work on distributed systems with <strong>Go</strong>.</p>",
+      "category": "Software Development",
+      "tags": ["go", "kubernetes", "postgres"]
+    },
+    {
+      "id": "55667788",
+      "url": "https://remotive.com/remote-jobs/product-manager-55667788",
+      "title": "Product Manager",
+      "company_name": "Initech",
+      "candidate_required_location": "India",
+      "publication_date": "2026-09-22",
+      "description": "<p>Own the roadmap.</p>",
+      "category": "Product",
+      "tags": ["product"]
+    }
+  ]
+}

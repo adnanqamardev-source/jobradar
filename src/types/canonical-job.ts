@@ -144,6 +144,22 @@ export const rawJobSchema = z.object({
   companyDomain: z.string().nullable(),
   title: z.string(),
   descriptionText: z.string().nullable(),
+  /**
+   * The posting body as HTML.
+   *
+   * Present because docs/02b §6.1 lists `descriptionHtml` on `RawJob` and every provider
+   * supplies it: Greenhouse `content`, Lever `descriptionHtml`, Ashby `descriptionHtml`,
+   * Remotive `description`, Adzuna `description`. It maps to the `jobs.description_html`
+   * column (docs/02a §5.4).
+   *
+   * This field was **missing** while every connector emitted it. Because `rawJobSchema` is a
+   * `z.object` and not `.passthrough()`, Zod stripped the unknown key on parse — so the HTML
+   * was fetched, carried, and then dropped at the seam, with no error anywhere, and
+   * `description_html` would have stayed NULL for the whole corpus. docs/05b ING-002 states
+   * the requirement as "HTML content is preserved (not stripped)", which is precisely what
+   * was not happening.
+   */
+  descriptionHtml: z.string().nullable(),
   locationRaw: z.string().nullable(),
   workMode: z.enum(["remote", "hybrid", "onsite", "unknown"]).nullable(),
   employmentType: z
