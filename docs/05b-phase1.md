@@ -511,11 +511,35 @@ named constant because that is the single value SCR-007 needs to override.
 `lib/scoring/semantic.ts`: batch-embed job descriptions and the aggregate profile; cosine similarity → 0–100.
 
 **Done when:**
-- [ ] Batches ≤100 inputs; embeddings written only when `description_text` changes
-- [ ] `semantic_score = (1 - cosine_distance) * 100`, clamped 0–100
-- [ ] Profile embedding rebuilt on profile save
-- [ ] Embedding failure retries and does **not** block the feed ([04 §5.9](./04-frontend-specification.md))
-- [ ] Test: semantically similar role with no keyword overlap still scores materially above an unrelated role
+- [x] Batches ≤100 inputs; embeddings written only when `description_text` changes
+- [x] `semantic_score = (1 - cosine_distance) * 100`, clamped 0–100
+- [ ] Profile embedding rebuilt on profile save — **blocked on E3**: nothing populates `jobs.embedding`, so there is no ingest path to hook this to
+- [x] Embedding failure retries and does **not** block the feed ([04 §5.9](./04-frontend-specification.md))
+- [x] Test: semantically similar role with no keyword overlap still scores materially above an unrelated role
+
+**BE-203 delivered** (`src/lib/scoring/semantic.ts`, 24 tests).
+
+Failure is non-fatal **by construction**, not by convention: every path returns `null`,
+and `null` is a value `composeScore` already handles by reweighting to the rule score. The
+alternative — throwing — would put the docs/04 §5.9 obligation on every future caller
+rather than on the one function that can honour it.
+
+Three guards exist because each failure passes a naive "did it return a number" check while
+causing durable, invisible damage:
+
+| Guard | Failure it prevents |
+|---|---|
+| re-order by the response's own `index` field | pairing text *i* with another text's vector. Embeddings are cached to `jobs.embedding` / `profiles.profile_embedding`, so a mis-pairing is permanent and surfaces nowhere but a slightly wrong score |
+| `null` on short / duplicate-index / wrong-width responses | a partial array shifts every later text onto the wrong embedding |
+| `null` on a zero vector or dimension mismatch | `NaN` propagating into `job_scores`, i.e. a score the UI cannot render. A mismatch means a different model — docs/02 §7.1 calls that a full reindex |
+
+`dimensions` is **omitted from the request body entirely** rather than set to 2048: this
+model rejects any other value with HTTP 400, and an absent field cannot drift from a
+comment.
+
+One deliberate trade recorded: a cosine above 1 is clamped rather than surfaced as a data
+problem, because a score outside 0–100 breaks the feed's ordering, and a visibly odd
+score is more usable than none.
 
 ---
 
