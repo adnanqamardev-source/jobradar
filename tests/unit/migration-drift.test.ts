@@ -201,6 +201,90 @@ describe("storage policies", () => {
   });
 });
 
+describe("claim primitive (FND-002)", () => {
+  /** The `claim_tasks` body only — everything after the AS $$ delimiter. */
+  const claimFn = /create or replace function public\.claim_tasks[\s\S]*?\$\$([\s\S]*?)\$\$;/.exec(
+    allSql,
+  )?.[1] ?? "";
+
+  it("creates claim_tasks with the documented signature", () => {
+    expect(allSql).toContain("create or replace function public.claim_tasks(");
+    // p_kind is typed as the enum, not text: a text parameter would silently accept a
+    // kind that does not exist and fail at comparison time instead of the call site.
+    expect(allSql).toContain("p_kind public.task_kind default null");
+    expect(allSql).toContain("p_lease_seconds integer default 300");
+  });
+
+  it("uses FOR UPDATE SKIP LOCKED, which is the whole reason this RPC exists", () => {
+    // Without SKIP LOCKED a second worker blocks on the first worker's rows; without FOR
+    // UPDATE the rows can be double-claimed. Either clause alone is not the spec.
+    expect(claimFn).toContain("for update skip locked");
+  });
+
+  it("orders by priority then run_after, matching planClaim", () => {
+    // plan.ts sorts `a.priority - b.priority || cmpRunAfter(a, b)`. If the SQL drifts
+    // from that, the two halves disagree about which task runs first.
+    expect(claimFn).toMatch(/order by t\.priority asc, t\.run_after asc/);
+  });
+
+  it("never increments attempts on claim", () => {
+    // docs/02b §6.4 increments attempts on FAILURE. Incrementing here would burn a retry
+    // on every success, so a task that succeeded three times would arrive at its first
+    // error with two retries already spent.
+    expect(claimFn).not.toMatch(/attempts\s*=\s*t?\.?attempts\s*\+/);
+    expect(claimFn).not.toMatch(/attempts\s*=\s*\w+\s*\+\s*1/);
+  });
+
+  it("does not write run_after on a fresh claim, only in the reaper", () => {
+    // run_after carries backoff scheduling alone; the lease lives in locked_at/locked_by.
+    // The claim UPDATE must not touch it, or the claim's own ORDER BY mixes two clocks.
+    // Anchored on `set status = 'running'` so the reaper's own `run_after` write — which
+    // is required — is not what this asserts on.
+    const claimUpdate = /set status = 'running'[\s\S]*?from candidates[\s\S]*?where t\.id = c\.id/.exec(
+      claimFn,
+    )?.[0] ?? "";
+    expect(claimUpdate).not.toBe("");
+    expect(claimUpdate).not.toContain("run_after");
+    expect(claimUpdate).toContain("locked_by = p_worker_id");
+  });
+
+  it("reaps only expired leases, back to pending and immediately due", () => {
+    expect(claimFn).toMatch(/where t\.status = 'running'/);
+    expect(claimFn).toContain("t.locked_at < now() - make_interval(secs =>");
+    expect(claimFn).toMatch(/set status = 'pending'/);
+    // Reaped tasks must be due now, not left in the stale backoff window that run_after
+    // was pointing at before the worker died.
+    expect(claimFn).toMatch(/run_after = now\(\)/);
+  });
+
+  it("is security definer, because task_queue forces RLS", () => {
+    expect(allSql).toMatch(/create or replace function public\.claim_tasks[\s\S]*?security definer/);
+    // An unpinned search_path in a security definer function is the classic privilege
+    // escalation vector: the caller controls the schema that resolves first.
+    expect(allSql).toMatch(/create or replace function public\.claim_tasks[\s\S]*?set search_path = public/);
+  });
+
+  it("grants EXECUTE to service_role only, revoking per role", () => {
+    // Not `revoke ... from public`: Supabase's ALTER DEFAULT PRIVILEGES grants EXECUTE to
+    // anon and authenticated explicitly, so a PUBLIC-only revoke removes nothing. This is
+    // exactly the bug 0008 was written to fix.
+    const grants = allSql.match(
+      /(?:revoke|grant) execute on function public\.claim_tasks[\s\S]*?;/g,
+    ) ?? [];
+    expect(grants.some((g) => /revoke[\s\S]*from anon/.test(g))).toBe(true);
+    expect(grants.some((g) => /revoke[\s\S]*from authenticated/.test(g))).toBe(true);
+    expect(grants.some((g) => /grant[\s\S]*to service_role/.test(g))).toBe(true);
+    // Claiming is a worker capability; a signed-in user must not reach it.
+    expect(grants.some((g) => /grant[\s\S]*to (anon|authenticated|public)\b/.test(g))).toBe(false);
+  });
+
+  it("caps the batch so a caller cannot claim the whole queue in one call", () => {
+    // p_limit is clamped, not trusted: a single unvalidated limit is an easy way to
+    // blow past the 25-task batch the spec fixes.
+    expect(claimFn).toMatch(/greatest\(1, least\(coalesce\(p_limit, 25\), 100\)\)/);
+  });
+});
+
 describe("docs/02a-schema.md agreement", () => {
   it("documents the remote_scope enum", () => {
     expect(schemaDoc).toContain("remote_scope");

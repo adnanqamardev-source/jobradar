@@ -111,12 +111,26 @@ Two consequences worth stating, because both were bugs once:
   would make one column carry two clocks. `n` in `2^n` is the **post-increment** value, so
   the first failure waits `2^1 = 2s`.
 
-**Known gap — `claim-primitive` (FND-002).** `FOR UPDATE SKIP LOCKED` cannot be expressed
-through `supabase-js`; it requires an RPC function created in a migration. Until FND-002
-writes it, the executors claim via compare-and-swap (`.eq("status","pending")` on the
-update). That preserves mutual exclusion per task but **not** batch-claim atomicity. The
-`planClaim` half — ordering, eligibility, cap, lease arithmetic — is already correct and is
-where the test coverage lives.
+**Where the claim is implemented (FND-002, 2026-10-06).** `FOR UPDATE SKIP LOCKED` cannot be
+expressed through `supabase-js` — its query builder composes select/update calls and has no
+way to attach either clause to a read — so the only way to get the specified primitive is an
+RPC. `supabase/migrations/0009_claim_task_queue.sql` creates
+`public.claim_tasks(p_worker_id, p_limit, p_kind, p_lease_seconds)`, which selects candidates
+`for update skip locked` ordered by `priority, run_after` and stamps `locked_at`/`locked_by`.
+It is `security definer` because `task_queue` has RLS enabled **and forced**; EXECUTE is
+revoked from `anon` and `authenticated` explicitly, because Supabase's default privileges
+grant EXECUTE per role and a PUBLIC-only revoke is a no-op (the lesson from `0008`).
+
+The function **performs** the claim but decides nothing. Consistent with the two rules above,
+it does not increment `attempts` and does not touch `run_after` on a fresh claim; both belong
+to `settleTask`/`planClaim`.
+
+**Lease reaping lives in the same function, deliberately.** A worker killed mid-task leaves
+its row `running` forever, and `planClaim` skips any row that is not `pending`, so a reaper
+outside the claim transaction could not hand an orphan back in time. Each `claim_tasks` call
+therefore first returns `running` rows whose lease is older than `p_lease_seconds` to
+`pending` (clearing the lease and setting `run_after = now()` so the task is immediately
+due). Only *expired* leases are touched — a row a live worker holds keeps its lease.
 
 **Handler dispatch is BE-108.** Until `src/lib/queue/handlers/*` exists, a claimed task has
 nothing to run. `queue-drain.ts` releases it back to `pending` with an explanatory

@@ -22,9 +22,11 @@
  * ## The one rule NOT here
  *
  * The claim itself. docs/02 §6.4 specifies `FOR UPDATE SKIP LOCKED`, which supabase-js
- * cannot express; it needs an RPC that FND-002 must create. Until then the executor uses
- * a compare-and-swap. `planClaim` decides *whether* to claim; the executor performs it.
- * See docs/02 §6.4 and the `claim-primitive` note in the drain script.
+ * cannot express; it needs an RPC. That RPC now exists —
+ * `public.claim_tasks(...)` in `supabase/migrations/0009_claim_task_queue.sql` (FND-002).
+ * `planClaim` still decides *whether* to claim; the function performs it. The two halves
+ * must agree on ordering and on the batch cap, so both order by priority then run_after
+ * and both cap at 25.
  *
  * ## Clock
  *
