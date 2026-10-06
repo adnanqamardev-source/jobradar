@@ -589,10 +589,32 @@ distinctly-named function.
 `rescore_profile` task handler requeueing affected jobs asynchronously (C4).
 
 **Done when:**
-- [ ] Profile save enqueues `rescore_profile`, never blocks the request
-- [ ] Handler processes in batches and is safe to run concurrently
-- [ ] UI shows a "Rescoring your feed…" indicator that clears on completion
-- [ ] New scores replace old rows; no unbounded growth of `job_scores`
+- [x] Profile save enqueues `rescore_profile`, never blocks the request
+- [x] Handler processes in batches and is safe to run concurrently
+- [ ] UI shows a "Rescoring your feed…" indicator that clears on completion — **Phase 2**; BE-304 now returns `rescoreTaskId` from every save so the FE has the handle it needs
+- [x] New scores replace old rows; no unbounded growth of `job_scores`
+
+**BE-205 delivered** (`src/lib/queue/handlers/rescore-profile.ts`, 19 tests). The
+enqueue half was BE-304 (`enqueue_rescore_profile()`); this is the handler end of that
+contract.
+
+Split in two, matching `queue/plan.ts`'s shape: `planRescoreBatch` is pure (which pairs to
+score, and whether to continue) and `runRescoreProfile` is the executor. That makes the
+governing constraint testable without a queue or a database — [02 §6.4](./02-technical-architecture.md)
+is explicit that "Vercel function timeouts are respected by **batch size, not
+long-running loops** — if a batch is incomplete, the handler re-enqueues itself".
+
+**BUG FOUND AND FIXED:** completion was originally decided by `jobs.length <= batchSize`.
+That is true for *every* full batch, so a profile with 2,000 jobs would score 100, report
+`done`, and leave 1,900 unscored with nothing indicating it. The store already limits the
+page, so length cannot reveal whether more remains — only `countRemaining` can. Now
+`jobs.length >= total`, with a test that pins the 100-against-2,000 case.
+
+Concurrency is safe **structurally**: every write is an upsert keyed on `(user_id, job_id)`,
+so two workers on the same profile converge rather than accumulate rows. No
+`sighting_count`-style accumulator appears here precisely because it would double-count
+under a race. A per-job failure is counted and skipped, never thrown — one malformed row
+must not cost the other 99 in the batch.
 
 ---
 

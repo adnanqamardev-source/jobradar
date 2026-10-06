@@ -119,7 +119,7 @@ No styling or UI components are built here. Work is completed when automated uni
 | **BE-202** | Deterministic Rule-Based Scorer | `SCR-002` | MUST | **DONE** — `weights.ts` + `rules.ts`: 6 components, unknown-is-never-0, breakdown always present. SCR-007 flag override deferred |
 | **BE-203** | pgvector Embedding Pipeline | `SCR-003` | MUST | **DONE (client half)** — `scoring/semantic.ts`: batched OpenRouter embeddings, index-reordering guard, non-fatal failures. Nothing writes `jobs.embedding` yet (E3), so the pipeline half is open |
 | **BE-204** | Score Composition & Persistence | `SCR-004` | MUST | **DONE** — `scoring/index.ts`: pure `composeScore` + service-role `persistScore` upsert on `(user_id,job_id)`; gated jobs written at 0 with reasons. Feed query (BE-306) still open |
-| **BE-205** | Batch Profile Rescorer | `SCR-005` | MUST | Requeues user's jobs asynchronously on preference update. |
+| **BE-205** | Batch Profile Rescorer | `SCR-005` | MUST | **DONE** — `queue/handlers/rescore-profile.ts`: bounded 100-job batches, re-enqueues itself when incomplete, concurrency-safe via the `(user_id,job_id)` upsert. FE indicator is Phase 2 |
 | **BE-206** | LLM Rationale Generator | `SCR-006` | SHOULD | Structured prompt against an OpenRouter `:free` chat model generating 2-sentence fit + gaps rationale. |
 | **BE-207** | Dynamic Weight Flags | `SCR-007` | NICE | Flag-overridable weights without code deployments. |
 
