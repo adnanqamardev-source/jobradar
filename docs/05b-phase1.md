@@ -467,12 +467,41 @@ Both sides now use it.
 `lib/scoring/rules.ts` producing a 0–100 score with the weights from [02 §6.3](./02-technical-architecture.md): skills 35, seniority 15, compensation 15, location/work-mode 15, recency 10, company preference 10. Weights come from `weights.ts` (flag-overridable).
 
 **Done when:**
-- [ ] Sum of weights is 100 and configurable without a code change path
-- [ ] Skills sub-score uses `job_skills.weight` so weak mentions count less
-- [ ] Compensation sub-score returns **neutral**, not 0, when salary is undisclosed
-- [ ] Recency decays monotonically (unit-tested)
-- [ ] Output includes a `breakdown` array in the exact shape rendered by [04 §3.4](./04-frontend-specification.md)
-- [ ] Same inputs → same score (pure function, deterministic test)
+- [x] Sum of weights is 100 and configurable without a code change path
+- [x] Skills sub-score uses `job_skills.weight` so weak mentions count less
+- [x] Compensation sub-score returns **neutral**, not 0, when salary is undisclosed
+- [x] Recency decays monotonically (unit-tested)
+- [x] Output includes a `breakdown` array in the exact shape rendered by [04 §3.4](./04-frontend-specification.md)
+- [x] Same inputs → same score (pure function, deterministic test)
+
+**BE-202 delivered** (`src/lib/scoring/weights.ts` + `rules.ts`, 53 tests).
+
+The invariant the whole module is built around: **every sub-score returns `{ raw, known }`,
+and a component that does not know scores `0.5`, never `0`.** docs/03 §6.1 X-09 requires
+this for salary; it holds for all six because a ranking computed on absent data
+systematically buries the jobs a source published least about.
+
+`known` is carried into `breakdown[]` so the FE can label an inferred number rather than
+present it as a finding. For the combined work-mode component it is `mode.known &&
+location.known` — an earlier `||` reported "known" while a third of the weight was a
+standing assumption about an undisclosed work mode.
+
+Decisions the docs do not settle, each asserted in tests:
+
+| Question | Decision | Why |
+|---|---|---|
+| `job_skills.weight` has **no CHECK** (`numeric(3,2)`) | divide by that job's own max weight | a connector writing 1/3 and one writing 0.2/0.6 must give the same ordering; clamping or trusting the raw value distorts one of them |
+| `prof_level = null` | treated as `proficient` | the column's own default |
+| seniority falloff | symmetric over 4 bands | a principal applying to an intern role is a mismatch too, even though only the over-qualified direction is gated |
+| `recency` horizon | 28 days | the same boundary docs/02b §6.4 expires a job at, so a job cannot be "fresh" to the scorer and "expired" to the cron |
+| future `posted_at` | clamped to 1.0 | a source clock problem must not outrank every real posting |
+| empty `preferred_companies` | neutral, not 0 | "no companies listed" is not "every company is unwanted" |
+
+**SCR-007 deferred.** The "flag-overridable" half of SCR-002 is not delivered: this repo
+has no feature-flag or config table, and inventing one to make a tuning value dynamic is
+a bad trade. `RULE_MODEL_VERSION` (`rule-v1`) is stamped into `job_scores.model_version`
+so a stored score always states which weight set produced it, and `SEMANTIC_BLEND` is a
+named constant because that is the single value SCR-007 needs to override.
 
 ---
 
