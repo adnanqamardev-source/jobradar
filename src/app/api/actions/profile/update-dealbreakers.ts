@@ -2,8 +2,19 @@
  * update-dealbreakers.ts — Server Action for ONB-005 (BE-304).
  *
  * Writes blocked companies, excluded keywords, preferred companies.
- * Values are normalised (trim, lowercase, dedupe) before write, matching
- * the spec's "normalised slugs" rule for blocked_companies.
+ *
+ * ## Company values are slugs, keywords are lowercased text
+ *
+ * docs/02a §5.3 documents `blocked_companies` as "normalised slugs". This action
+ * previously applied the same `trim().toLowerCase()` to all three lists, which is
+ * correct for `excluded_keywords` and wrong for companies: a user who typed
+ * "Acme Corp." stored the literal string `acme corp.`, which no slugified comparison
+ * against a `jobs` row could ever match — so the dealbreaker silently did nothing, and
+ * the gate that reads it did not exist yet to notice.
+ *
+ * Both sides now go through `normaliseCompanyInput`, which is the same function the
+ * SCR-001 `blocked_company` gate uses via `companySlugCandidates`. One normaliser, so
+ * the write and the match cannot drift apart again.
  */
 
 "use server";
@@ -14,6 +25,7 @@ import { AppError } from "@/lib/errors";
 import { requireUser } from "@/lib/auth/require-user";
 import { createUserClient } from "@/lib/db/user-client";
 import { updateOwnProfile, type ProfileUpdateResult } from "@/lib/db/profile-update";
+import { normaliseCompanyInput } from "@/lib/utils/company-slug";
 import { updateDealbreakersRequestSchema } from "@/types/api";
 
 export type UpdateDealbreakersResult = ProfileUpdateResult;
@@ -32,16 +44,36 @@ function normaliseKeywords(list: string[]): string[] {
   return out;
 }
 
+/**
+ * Normalise a company list to slugs, deduped, dropping entries that slugify to
+ * nothing.
+ *
+ * Dedupe happens *after* normalisation, so "Acme Corp." and "acme corp" collapse to a
+ * single entry rather than both being stored.
+ */
+function normaliseCompanies(list: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of list) {
+    const slug = normaliseCompanyInput(raw);
+    if (slug && !seen.has(slug)) {
+      seen.add(slug);
+      out.push(slug);
+    }
+  }
+  return out;
+}
+
 function pick(
   input: z.infer<typeof updateDealbreakersRequestSchema>,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (input.blockedCompanies !== undefined)
-    out.blocked_companies = normaliseKeywords(input.blockedCompanies);
+    out.blocked_companies = normaliseCompanies(input.blockedCompanies);
   if (input.excludedKeywords !== undefined)
     out.excluded_keywords = normaliseKeywords(input.excludedKeywords);
   if (input.preferredCompanies !== undefined)
-    out.preferred_companies = normaliseKeywords(input.preferredCompanies);
+    out.preferred_companies = normaliseCompanies(input.preferredCompanies);
   return out;
 }
 

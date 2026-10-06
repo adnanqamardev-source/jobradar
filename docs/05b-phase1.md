@@ -428,11 +428,36 @@ interchangeable. Adds a `remote_scope` enum, India-aware salary parsing, and the
 `lib/scoring/gates.ts` implementing the five gates from [02 §6.3](./02-technical-architecture.md): blocked company, excluded keyword, work mode, salary floor, seniority over-band.
 
 **Done when:**
-- [ ] Each gate returns a machine-readable reason in `gate_result.reasons`
-- [ ] Any hit → `final_score = 0` **and** the job is excluded from the feed (not shown at 0)
-- [ ] Salary gate only fires when salary is disclosed; undisclosed never triggers it ([03 §6.1 X-09](./03-security-and-access.md))
-- [ ] Blocked company still allows an existing application to display ([03 §6.1 X-12](./03-security-and-access.md))
-- [ ] Unit tests: one passing case + one failing case per gate
+- [x] Each gate returns a machine-readable reason in `gate_result.reasons`
+- [x] Any hit → `final_score = 0` **and** the job is excluded from the feed (not shown at 0)
+- [x] Salary gate only fires when salary is disclosed; undisclosed never triggers it ([03 §6.1 X-09](./03-security-and-access.md))
+- [x] Blocked company still allows an existing application to display ([03 §6.1 X-12](./03-security-and-access.md))
+- [x] Unit tests: one passing case + one failing case per gate
+- [x] No gate fires on missing data — a separate `describe` block pins this per gate, because a gate that excludes a job for want of data is invisible to the user
+
+**BE-201 delivered** (`src/lib/scoring/gates.ts`, 38 tests). Reason codes are
+`blocked_company` · `excluded_keyword` · `work_mode_mismatch` · `salary_below_floor` ·
+`seniority_over_band`; the last four follow `salary_below_floor`'s naming from
+[02a §5.5](./02a-schema.md), which is the only one the docs pin as a string.
+
+Judgement calls the docs do not settle, all four now asserted in tests:
+
+| Question | Decision | Why |
+|---|---|---|
+| Salary period `NULL` | treated as `year` | most postings state no period; treating it as "don't gate" would make the floor decorative |
+| Hourly salary | gate declines | annualising needs an hours-per-week assumption nobody can audit |
+| Currency mismatch | gate declines | no FX table exists; inventing rates changes results on unauditable numbers |
+| `work_modes = '{}'` | no gate | the column defaults to empty, so gating on it would empty the feed for anyone who has not finished onboarding |
+| Seniority `unknown` | no gate | the enum has no defined order, so `seniorityRank` is declared in `gates.ts`, not read from the DB |
+
+Keywords match as whole phrases with **per-end** word boundaries — a blanket `\b…\b`
+can never match "c++", while substring matching makes "ai" match "maintain".
+
+**Shared helper:** `src/lib/utils/company-slug.ts` (`utils/` per [02 §4](./02-technical-architecture.md)).
+Extracted because write and match had to agree: `blocked_companies` is documented as
+"normalised slugs" but BE-304 stored `trim().toLowerCase()`, so "Acme Corp." was stored
+verbatim and could never match a slugified job — the dealbreaker was silently inert.
+Both sides now use it.
 
 ---
 
