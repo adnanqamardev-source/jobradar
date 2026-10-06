@@ -91,6 +91,22 @@ required before the button does anything:
 - **Rate limiting:** per IP + per email: **5 sign-in attempts / 15 min**, **3 magic links / 10 min**. On breach â†’ generic `too_many_attempts` with a 15-minute cooldown. Same endpoint always returns the same response regardless of whether the email exists (no account enumeration).
 - **Admin bootstrap:** first deploy seeds `ADMIN_EMAILS` â†’ those accounts get `role = 'admin'` via a one-time migration. Admin can never be self-assigned through the app.
 
+**Profile creation on signup (added 2026-10-05, `0005_handle_new_user.sql`).** A trigger on
+`auth.users` AFTER INSERT creates the `profiles` row, rather than each auth route doing it in
+application code. Three auth methods each remembering to insert is three chances to forget, and a
+user without a `profiles` row is not a partial signup — it is a user the scorer, the feed and every
+owner-scoped RLS policy treats as nonexistent. Two properties are deliberate:
+
+- **`SECURITY DEFINER` with `set search_path = ''`.** The trigger fires inside the auth service's
+  insert, where the caller is not yet an authenticated principal, and `profiles` carries FORCE ROW
+  LEVEL SECURITY — so the insert needs the definer's bypass role. The empty search_path is the
+  privilege-escalation guard: a mutable one lets any caller able to create a schema shadow `auth`
+  or `public` and execute as the definer.
+- **`role` is never read from `raw_user_meta_data`.** That field is user-writable through the
+  client SDK, so honouring a `role` key there would be admin self-assignment — precisely what the
+  bullet above forbids. Verified by probe: a signup carrying `{"role":"admin"}` produces a
+  `role = 'user'` row. Admin comes only from the one-time bootstrap or an operator update.
+
 ---
 
 ## 3. User Roles & Permissions

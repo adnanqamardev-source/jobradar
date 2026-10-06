@@ -984,3 +984,90 @@ so both layers now agree. Applied to the local stack: `pnpm db:reset` green with
 Rule reminder: every step above starts from the ticket text *and* the cited docs sections, and ends
 with pasted gate output — not "should pass".
 
+---
+
+# Session — 2026-10-05 (later): production database, Google sign-in, BE-304 creation half
+
+**Nothing in this entry has been pushed.** The migration and the dashboard page are local and
+uncommitted at the time of writing; review first.
+
+## The hosted project had no schema at all
+
+`list_migrations → []`, `list_tables → []` against `diuwzagrpqhlutbqdvrs`. Everything in
+`docs/06` marked FND-002/FND-003 "Completed" existed **only in the local Docker stack**. Production
+had never had a migration applied — the dashboard said "Last migration: No migrations" the whole
+time. This is `docs/02` §7.3's warning in the wild: a tool reporting "up to date" against zero
+migrations proves nothing was applied.
+
+Applied through the Supabase MCP, one at a time, verifying between each: `init` → `resumes` →
+`remote_scope` → `fix_is_admin`. Then verified with a real query:
+
+```
+tables 21 · policies 28 · storage policies 4 · remote_scope enum 1
+is_admin() reads app_metadata: true · jobs RLS enabled+forced: true
+vector: 1 · pg_trgm: 1 · pg_cron: 0
+```
+
+**`pg_cron` deliberately not created.** `docs/07`'s own risk entry called it unproven on this
+project — availability is not permission — and it sat on line 6 of `0001_init.sql`, where a failure
+rolls back the entire migration and leaves zero tables. The risk assessment was correct. Not needed:
+`/api/cron/*` runs on Vercel Cron per `docs/02` §2.
+
+## Google sign-in: four separate failures, each looking like "auth is broken"
+
+1. **The route was never pushed.** `git status -sb` → `[ahead 5]`. A 404 on a button is not an auth
+   bug. *I should have probed this first and saved the user a Google Cloud detour.*
+2. **`env()` interpolation was invalid.** `config.toml` had
+   `redirect_uri = "env(NEXT_PUBLIC_APP_URL)/auth/callback"`; the CLI hook is `^env\((.*)\)$`, so a
+   composed value is sent literally.
+3. **Wrong callback registered with Google.** Supabase sits between the app and Google, so Google
+   must redirect to `https://<project-ref>.supabase.co/auth/v1/callback`. The app's own domain —
+   the intuitive answer — yields `redirect_uri_mismatch`.
+4. **The provider was never enabled on the project.** Supabase MCP has no auth-provider tool;
+   `supabase config push` needs `supabase login`. Two of the four were only discoverable by probing.
+
+The one probe that settles all of it:
+
+```
+GET /auth/v1/authorize?provider=google&redirect_uri=…/auth/callback
+→ 302 https://accounts.google.com/o/oauth2/v2/auth
+    ?client_id=928371181169-….apps.googleusercontent.com
+    &redirect_uri=https://diuwzagrpqhlutbqdvrs.supabase.co/auth/v1/callback
+    &scope=email profile
+```
+
+## BE-304 — the creation half
+
+`0005_handle_new_user.sql`: one `auth.users` AFTER INSERT trigger creates the `profiles` row, for
+every auth method at once. Probed locally, both directions:
+
+| Probe | Result |
+|---|---|
+| signup with `{"role":"admin"}` in metadata | row created, `role = user` — self-assignment refused |
+| signup with null email + `{}` metadata | id-derived `@no-email.invalid` placeholder, no unique collision |
+| `full_name` absent | stored as `NULL`, not `''` |
+| probe rows deleted afterwards | `profiles` = 0 |
+
+`/dashboard` added as the post-auth landing route. It is **not FE-105** — it exists because
+`/auth/callback` redirects there and every successful login was landing on a 404. It reads the
+caller's own `profiles` row through the RLS-scoped client, so one screen exercises session →
+`requireUser()` → user client → policy. A missing row renders an explicit "Profile not created"
+message instead of an empty shell, because a silent blank dashboard is the failure this page
+exists to surface.
+
+## Gates
+
+`pnpm typecheck` 0 · `pnpm lint` 0 · `pnpm test` 16 files / 281 passed · `pnpm db:reset` green with
+0005 applied · `pnpm build` lists `ƒ /dashboard` and `○ /login`.
+
+## Still open
+
+- **`0005` is not on the hosted project yet** — deliberately, pending review of this work.
+- The private `resumes` storage bucket does not exist; `0002`'s storage policies reference
+  `bucket_id = 'resumes'`, so uploads fail until it is created.
+- `skills` is empty in production — `seed.sql` was never applied there, so skill matching has no
+  vocabulary.
+- No logout route (AUT-003), so sessions cannot be ended.
+- `docs/03` §2.2 token lifetimes (1h access / 30d refresh) are not implemented; Supabase defaults
+  apply.
+
