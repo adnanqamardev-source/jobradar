@@ -1278,3 +1278,63 @@ Still needs your decision, both schema-level:
 Untouched: `onboarding_completed` write, rate limiting (`lib/ratelimit.ts` does not exist), title
 normalisation + `.min(1)`, currency allowlist, shared company-slug helper with E3, free-text pending
 skills.
+## Production 0006, and ONB-006 rescore enqueue 2026-10-06
+
+### 0006 applied to production
+
+Pre-flight first: 1 profile row, 1 needing backfill, trigger absent - a small blast radius,
+though the backfill `UPDATE`s every profile row so it was never a no-op to wave through.
+Applied via `apply_migration` (version `20261006125051`). Verified trigger present, backfill
+complete, and `updated_at` genuinely moves: `12:50:51 -> 12:51:12`, `updated_at_moved: true`.
+
+### ONB-006: rescore_profile enqueue
+
+`task_queue` is RLS-enabled *and forced* with no policies, so a user action cannot INSERT
+regardless of table grants. Confirmed directly: an INSERT as `authenticated` fails with
+`new row violates row-level security policy`. Both easy routes out are bad - service-role in
+a user action breaks the repo's most-repeated rule, and `grant insert` also grants
+UPDATE/DELETE, letting a user claim and run other people's tasks.
+
+So: `enqueue_rescore_profile()` (0007), a SECURITY DEFINER function taking **no arguments**.
+`kind` is fixed, `profile_id` is forced to `auth.uid()`, so there is nothing to forge. A partial
+unique index on `(payload->>'profile_id') where kind='rescore_profile' and status='pending'`
+coalesces repeated saves into one task - ONB-006 wants one rescore of the final state, not
+three of intermediate states.
+
+### The bug 0007's grants had
+
+0007 ended with `revoke all on function ... from public; grant execute ... to authenticated;`
+That looked right and was not. Supabase sets ALTER DEFAULT PRIVILEGES so `anon`,
+`authenticated` and `service_role` get EXECUTE on every new function - those are *explicit*
+per-role grants, not the PUBLIC grant, so the revoke removed something that was never there.
+The ACL came back `{postgres=X/postgres,anon=X/postgres,...}` - anon could call it.
+
+Impact while live: small. The function raises on a null `auth.uid()`, so an anon call errors
+rather than enqueueing, and there is no anonymous profile to rescore. A hardening fix, not an
+exploitable hole - and never applied to production. 0008 revokes per-role instead, which is
+what actually works against default privileges.
+
+Lesson worth keeping: `revoke ... from public` is not a default-privilege grant, and a
+plausible-looking revoke that silently does nothing is worse than no revoke. Verified the ACL
+this time instead of trusting the statement.
+
+### Verification
+
+14 integration tests green against the real stack, including the security properties:
+queued payload equals the caller's own uid; three calls return one task id; two users get
+separate tasks; passing a `profile_id` argument errors (the signature is argument-free);
+a direct INSERT still fails RLS; and a new task is allowed once the previous is no longer
+pending. Two users / one-uid-each proven in SQL as well.
+
+8 unit tests for the caller contract (never throws, no forgeable arguments, returns the
+coalesced id). `pnpm typecheck` 0, `pnpm lint` 0, `pnpm test` 26 passed / 14 skipped.
+
+**0007 and 0008 are LOCAL ONLY.** They are not on production - decided at the end of this
+entry rather than assumed.
+
+### Still open
+
+`onboarding_completed` write (ONB-005 Finish), rate limiting (`lib/ratelimit.ts` does not
+exist), title normalisation + `.min(1)`, currency allowlist, shared company-slug helper with E3,
+free-text pending skills. ONB-006's FE half: "Rescoring your feed…", the completion toast, and
+passing `expectedUpdatedAt`.

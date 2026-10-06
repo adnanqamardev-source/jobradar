@@ -11,10 +11,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const revalidatePathMock = vi.hoisted(() => vi.fn());
+const enqueueRescoreMock = vi.hoisted(() => vi.fn());
 
 vi.mock("next/cache", () => ({
   revalidatePath: revalidatePathMock,
   revalidateTag: vi.fn(),
+}));
+
+// The real RPC would need a live user JWT; the enqueue contract is pinned in
+// `enqueue-rescore.test.ts` and in the DB-level integration suite.
+vi.mock("@/lib/db/enqueue-rescore", () => ({
+  enqueueRescoreProfile: enqueueRescoreMock,
 }));
 
 import { updateOwnProfile } from "@/lib/db/profile-update";
@@ -41,6 +48,8 @@ function makeClient(rows: unknown[] | null, error: { message: string } | null = 
 
 beforeEach(() => {
   revalidatePathMock.mockReset();
+  enqueueRescoreMock.mockReset();
+  enqueueRescoreMock.mockResolvedValue("task-1");
 });
 
 const ROW = { id: "u1", updated_at: "2026-10-06T00:00:00.000Z" };
@@ -142,5 +151,38 @@ describe("updateOwnProfile — optimistic concurrency (docs/03 §5.2)", () => {
 
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data.profile.city).toBe("Bengaluru");
+  });
+});
+
+describe("updateOwnProfile — rescore enqueue (ONB-006)", () => {
+  it("enqueues a rescore on a successful write", async () => {
+    const client = makeClient([ROW]);
+
+    const res = await updateOwnProfile(client as never, "u1", { city: "Bengaluru" }, undefined, "Failed");
+
+    expect(enqueueRescoreMock).toHaveBeenCalledTimes(1);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.rescoreTaskId).toBe("task-1");
+  });
+
+  it("does NOT enqueue when the concurrency guard rejects the write", async () => {
+    // The task would rescore a profile that was never changed — wasted worker time and a
+    // misleading "Rescoring your feed…" for a save that did not happen.
+    const client = makeClient([]);
+
+    await updateOwnProfile(client as never, "u1", { city: "X" }, "stale", "Failed");
+
+    expect(enqueueRescoreMock).not.toHaveBeenCalled();
+  });
+
+  it("still reports success when enqueueing fails — the write already committed", async () => {
+    enqueueRescoreMock.mockResolvedValue(null);
+    const client = makeClient([ROW]);
+
+    const res = await updateOwnProfile(client as never, "u1", { city: "Bengaluru" }, undefined, "Failed");
+
+    // A background-job failure is not a save failure; the profile is written.
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.rescoreTaskId).toBeNull();
   });
 });

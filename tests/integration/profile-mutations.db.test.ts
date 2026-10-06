@@ -43,17 +43,19 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const URL = process.env.TEST_SUPABASE_URL;
 const SERVICE_ROLE = process.env.TEST_SUPABASE_SERVICE_ROLE;
+/** Anon key, needed to obtain a real *user* JWT (the RPC keys off `auth.uid()`). */
+const ANON_KEY = process.env.TEST_SUPABASE_ANON_KEY;
 
 /** Refuse to run against anything that isn't a local stack. */
 const IS_LOCAL = Boolean(URL && /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?/.test(URL));
 
-if (!IS_LOCAL || !SERVICE_ROLE) {
+if (!IS_LOCAL || !SERVICE_ROLE || !ANON_KEY) {
   console.warn(
-    "[integration] skipping — set TEST_SUPABASE_URL (local) and TEST_SUPABASE_SERVICE_ROLE to run",
+    "[integration] skipping — set TEST_SUPABASE_URL (local), TEST_SUPABASE_SERVICE_ROLE and TEST_SUPABASE_ANON_KEY to run",
   );
 }
 
-const suite = IS_LOCAL && SERVICE_ROLE ? describe : describe.skip;
+const suite = IS_LOCAL && SERVICE_ROLE && ANON_KEY ? describe : describe.skip;
 
 /** Recognisable prefix so cleanup can find anything this file leaves behind. */
 const EMAIL_TAG = "integration-be304-";
@@ -284,5 +286,154 @@ admin = createClient(URL!, SERVICE_ROLE!, {
 
     const remaining = await admin.from("profile_skills").select("profile_id").eq("profile_id", theirs);
     expect(remaining.data).toHaveLength(1);
+  });
+});
+
+/**
+ * ONB-006's rescore enqueue. The interesting properties are all "can it be abused",
+ * so they are checked against the real Postgres rather than a mock: a mock would just
+ * agree with whatever the implementation did.
+ */
+suite("enqueue_rescore_profile — ONB-006", () => {
+  beforeAll(async () => {
+    await admin.from("task_queue").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+  });
+
+  afterAll(async () => {
+    await admin.from("task_queue").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+  });
+
+  /** A client whose JWT belongs to `email`, so `auth.uid()` resolves to that user. */
+  async function signedInClient(label: string) {
+    const email = `${EMAIL_TAG}${label}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@example.invalid`;
+    const password = "Onb006-Test-123!";
+    const { data, error } = await admin.auth.admin.createUser({ email, email_confirm: true });
+    if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
+    createdUserIds.push(data.user.id);
+    await admin.auth.admin.updateUserById(data.user.id, { password });
+
+    const anon = createClient(URL!, ANON_KEY!, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { error: signInError } = await anon.auth.signInWithPassword({ email, password });
+    if (signInError) throw new Error(`signIn ${label}: ${signInError.message}`);
+
+    return { client: anon, userId: data.user.id };
+  }
+
+  it("queues exactly one task, scoped to the caller", async () => {
+    const { client, userId } = await signedInClient("rescore");
+
+    const { data, error } = await client.rpc("enqueue_rescore_profile");
+    expect(error).toBeNull();
+    expect(typeof data).toBe("string");
+
+    const { data: rows } = await admin
+      .from("task_queue")
+      .select("id, kind, payload, status")
+      .eq("id", data as string);
+
+    expect(rows).toHaveLength(1);
+    expect(rows?.[0]?.kind).toBe("rescore_profile");
+    expect(rows?.[0]?.status).toBe("pending");
+    // Forced to the caller's own uid — not a caller-supplied value.
+    expect(rows?.[0]?.payload).toEqual({ profile_id: userId });
+  });
+
+  it("coalesces repeated saves into one pending task", async () => {
+    const { client, userId } = await signedInClient("coalesce");
+
+    const ids: unknown[] = [];
+    for (let i = 0; i < 3; i++) {
+      const { data } = await client.rpc("enqueue_rescore_profile");
+      ids.push(data);
+    }
+
+    // ONB-006 wants one rescore reflecting the final state, not three reflecting
+    // intermediate states as the user edits fields.
+    expect(ids[0]).toBe(ids[1]);
+    expect(ids[1]).toBe(ids[2]);
+
+    const { data: rows } = await admin
+      .from("task_queue")
+      .select("id")
+      .eq("kind", "rescore_profile")
+      .eq("payload->>profile_id", userId);
+
+    expect(rows).toHaveLength(1);
+  });
+
+  it("keeps two users' tasks separate", async () => {
+    const a = await signedInClient("user-a");
+    const b = await signedInClient("user-b");
+
+    const first = await a.client.rpc("enqueue_rescore_profile");
+    const second = await b.client.rpc("enqueue_rescore_profile");
+
+    expect(first.data).not.toBe(second.data);
+
+    const { data: aRows } = await admin
+      .from("task_queue")
+      .select("id")
+      .eq("kind", "rescore_profile")
+      .eq("payload->>profile_id", a.userId);
+    expect(aRows).toHaveLength(1);
+
+    const { data: bRows } = await admin
+      .from("task_queue")
+      .select("id")
+      .eq("kind", "rescore_profile")
+      .eq("payload->>profile_id", b.userId);
+    expect(bRows).toHaveLength(1);
+  });
+
+  it("takes no arguments — there is no profile_id a caller could forge", async () => {
+    const { client } = await signedInClient("noargs");
+
+    // Supabase rejects a function that declares no parameters, so this proves the
+    // signature is argument-free rather than merely ignoring what it is given.
+    const { error } = await client.rpc("enqueue_rescore_profile", {
+      profile_id: "00000000-0000-0000-0000-000000000001",
+    });
+
+    expect(error).not.toBeNull();
+  });
+
+  it("a direct INSERT is still rejected — the RPC is the only way in", async () => {
+    const { client } = await signedInClient("no-insert");
+
+    // RLS is forced with no policies on task_queue, so the table-level INSERT grant that
+    // `authenticated` holds is inert. This is what stops a user enqueueing arbitrary
+    // tasks (or claiming other people's) without going through the narrow function.
+    const { error } = await client.from("task_queue").insert({
+      kind: "rescore_profile",
+      payload: {},
+    });
+
+    expect(error).not.toBeNull();
+    expect(error?.message).toMatch(/row-level security/i);
+  });
+
+  it("allows a new task once the previous one is no longer pending", async () => {
+    const { client, userId } = await signedInClient("requeue");
+
+    const first = await client.rpc("enqueue_rescore_profile");
+    await admin
+      .from("task_queue")
+      .update({ status: "done" })
+      .eq("id", first.data as string);
+
+    const second = await client.rpc("enqueue_rescore_profile");
+
+    // The partial index only covers pending rows, so a finished rescore does not block
+    // the next one.
+    expect(second.data).not.toBe(first.data);
+
+    const { data: rows } = await admin
+      .from("task_queue")
+      .select("id")
+      .eq("kind", "rescore_profile")
+      .eq("payload->>profile_id", userId);
+    expect(rows).toHaveLength(2);
   });
 });

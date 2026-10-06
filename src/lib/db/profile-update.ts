@@ -31,6 +31,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { enqueueRescoreProfile } from "@/lib/db/enqueue-rescore";
 import type { SupabaseClient } from "@/lib/db/user-client";
 import type { ProfileRow } from "@/types/db";
 
@@ -40,7 +41,7 @@ export interface ProfileUpdateFailure {
 }
 
 export type ProfileUpdateResult =
-  | { ok: true; data: { profile: ProfileRow } }
+  | { ok: true; data: { profile: ProfileRow; rescoreTaskId: string | null } }
   | ProfileUpdateFailure;
 
 /**
@@ -101,11 +102,17 @@ export async function updateOwnProfile(
   revalidatePath("/dashboard");
   revalidatePath("/settings");
 
+  // docs/02b: a profile save queues a `rescore_profile` task — never synchronous (C4).
+  // Best-effort by design: the write above has already committed, so a failure here is
+  // logged rather than surfaced as a save error the user cannot act on. The id is
+  // coalesced, so a caller already queued does not create a second task.
+  const rescoreTaskId = await enqueueRescoreProfile(supabase);
+
   const profile = data[0];
   if (!profile) {
     // Unreachable given the length check above, but the type can't know that.
     return { ok: false, error: { code: "not_found", message: "Profile not found." } };
   }
 
-  return { ok: true, data: { profile } };
+  return { ok: true, data: { profile, rescoreTaskId } };
 }
