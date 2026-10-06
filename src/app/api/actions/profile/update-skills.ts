@@ -7,6 +7,12 @@
  * Spec pin: "Minimum 3 skills to continue" is enforced on the minimum
  * count before write; unknown skill ids are rejected rather than silently
  * dropped (the picker validates against `skills` via the alias index).
+ *
+ * ## The replace is not atomic, so it compensates
+ *
+ * PostgREST has no multi-statement transaction here, so this is
+ * snapshot → delete → insert → (on failure) restore. See the comment at the
+ * snapshot for why the snapshot is mandatory rather than an optimisation.
  */
 
 "use server";
@@ -15,6 +21,7 @@ import { z } from "zod";
 import { AppError } from "@/lib/errors";
 import { requireUser } from "@/lib/auth/require-user";
 import { createUserClient } from "@/lib/db/user-client";
+import { logger } from "@/lib/logger";
 import type { ProfileRow } from "@/types/db";
 
 export interface SkillLevel {
@@ -45,6 +52,7 @@ export async function updateSkills(
     const skills = parsed.skills as SkillLevel[];
 
     // Validate each entry's shape before touching the DB.
+    const seen = new Set<string>();
     for (const s of skills) {
       if (
         typeof s !== "object" ||
@@ -60,6 +68,19 @@ export async function updateSkills(
           },
         };
       }
+      // PK is (profile_id, skill_id) per docs/02a-schema.md:111. A duplicate
+      // would surface as a raw Postgres unique violation from the insert, so
+      // reject it here with a message that names the actual fault.
+      if (seen.has(s.skillId)) {
+        return {
+          ok: false,
+          error: {
+            code: "VALIDATION_ERROR",
+            message: `Duplicate skill: ${s.skillId}.`,
+          },
+        };
+      }
+      seen.add(s.skillId);
     }
 
     // Verify the supplied skill ids exist (protects the FK to skills).
@@ -80,7 +101,34 @@ export async function updateSkills(
       };
     }
 
-    // Replace the caller's rows in one shot.
+    // Snapshot the current rows before the replace. Delete-then-insert is not a
+    // transaction over PostgREST, so without this a failed insert returns
+    // DATABASE_ERROR and leaves the user with *zero* skills — silently destroying
+    // data they had before clicking Save. Restoring the snapshot is the compensating
+    // write; `upload-resume.ts:128-141` does the same for its orphan row.
+    const { data: snapshot, error: snapshotError } = (await supabase
+      .from("profile_skills")
+      .select("skill_id, level, years, is_primary")
+      .eq("profile_id", user.id)) as {
+      data: {
+        skill_id: string;
+        level: string;
+        years: number | null;
+        is_primary: boolean;
+      }[] | null;
+      error: { message: string } | null;
+    };
+    if (snapshotError?.message) {
+      return {
+        ok: false,
+        error: {
+          code: "DATABASE_ERROR",
+          message: snapshotError.message,
+        },
+      };
+    }
+    const previous = snapshot ?? [];
+
     const { error: deleteError } = await supabase
       .from("profile_skills")
       .delete()
@@ -107,6 +155,25 @@ export async function updateSkills(
       .from("profile_skills")
       .insert(rows);
     if (insertError) {
+      // Compensate: put the user's previous skills back rather than leaving an
+      // empty profile. A failed restore is logged, not swallowed silently.
+      const restoreRows = previous.map((r) => ({
+        profile_id: user.id,
+        skill_id: r.skill_id,
+        level: r.level,
+        years: r.years,
+        is_primary: r.is_primary,
+      }));
+      const { error: restoreError } =
+        restoreRows.length > 0
+          ? await supabase.from("profile_skills").insert(restoreRows)
+          : { error: null };
+
+      logger.error("Failed to save skills; restore attempted", {
+        error: insertError,
+        restored: restoreError ? false : restoreRows.length,
+      });
+
       return {
         ok: false,
         error: {

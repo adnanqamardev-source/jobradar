@@ -2,9 +2,19 @@
  * update-logistics.ts — Server Action for ONB-004 (BE-304).
  *
  * Updates work modes, hybrid cap, country/city, time zone, salary, visa requirement.
- * Salary fields: write a positive integer, or `null`/omitted for "no floor".
- * `0` is normalised to `null` so the DB CHECK constraint (`min_salary > 0`
- * when present) is never breached by a user mistake.
+ *
+ * ## Salary floor: `null` clears, `undefined` leaves alone
+ *
+ * ONB-004: "empty salary = no floor (`NULL`), not `0`". Three states, three behaviours:
+ * - `minSalary: <positive int>` → write the floor
+ * - `minSalary: null`           → **clear** the floor (write `NULL`)
+ * - `minSalary` omitted         → leave the column untouched
+ *
+ * The `null`-clears distinction matters: an earlier revision guarded on
+ * `!== undefined && !== null`, which silently dropped the only input that can
+ * clear a floor, so a user could set a minimum and never remove it. `0` is not
+ * a third option — `updateLogisticsRequestSchema` is `.positive()`, so Zod
+ * rejects it before this file sees it.
  */
 
 "use server";
@@ -36,8 +46,8 @@ function pick(
   if (input.countryCode !== undefined) out.country_code = input.countryCode;
   if (input.city !== undefined) out.city = input.city;
   if (input.timeZone !== undefined) out.time_zone = input.timeZone;
-  if (input.minSalary !== undefined && input.minSalary !== null)
-    out.min_salary = input.minSalary > 0 ? input.minSalary : null;
+  // `null` clears the floor; omitted leaves the column untouched.
+  if (input.minSalary !== undefined) out.min_salary = input.minSalary;
   if (input.salaryCurrency !== undefined) out.salary_currency = input.salaryCurrency;
   if (input.salaryPeriod !== undefined) out.salary_period = input.salaryPeriod;
   if (input.visaRequired !== undefined) out.visa_required = input.visaRequired;

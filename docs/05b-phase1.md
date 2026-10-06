@@ -97,10 +97,12 @@ Build the 4-step wizard with progress rail, `Back`/`Continue`, per-step Zod vali
 
 Multi-select target titles (free text allowed), seniority enum, years of experience → `profiles.target_titles`, `seniority`, `years_experience`.
 
+> **BE half landed 2026-10-06** — `updateProfile` action (`f8d367e`). Writes the four columns through the RLS-scoped client. **Open on the BE side:** titles are stored verbatim (no trim/dedupe), and the schema has no `.min(1)` so a save with zero titles is accepted. The FE bullets below stay unticked.
+
 **Done when:**
 - [ ] At least one title required to continue; entered titles persist as chips with remove
-- [ ] Free-text titles are accepted and normalised (trim, dedupe, case preserved for display)
-- [ ] Saves to the DB and is readable by the scorer in E4
+- [ ] Free-text titles are accepted and normalised (trim, dedupe, case preserved for display) — **BE gap: no normalisation yet**
+- [x] Saves to the DB and is readable by the scorer in E4 — **BE done** (`updateProfile`, 2026-10-06)
 - [ ] Validation error renders inline under the field, not as a toast
 
 ---
@@ -110,11 +112,13 @@ Multi-select target titles (free text allowed), seniority enum, years of experie
 
 Searchable chip picker over `skills` (with `aliases`) + free-text add, per-skill level → `profile_skills`.
 
+> **BE half landed 2026-10-06** — `updateSkills` action (`f8d367e`). Enforces the 3-skill minimum and a `familiar`/`proficient`/`expert` level per entry, verifies every `skill_id` against `skills` before writing, rejects duplicate ids against the `(profile_id, skill_id)` PK, and compensates the delete-then-insert with a snapshot/restore so a failed insert cannot wipe a user's skills. **Open on the BE side:** no free-text pending-skill path (unknown ids are rejected outright) and no `profile_embedding` recompute job.
+
 **Done when:**
 - [ ] Search matches `name` and `aliases`, debounced ≤200ms
-- [ ] Minimum 3 skills to continue; each has a level (`familiar`/`proficient`/`expert`)
-- [ ] Free-text adds create a pending skill entry handled without breaking the FK contract
-- [ ] Skills drive the `profile_embedding` recompute job
+- [x] Minimum 3 skills to continue; each has a level (`familiar`/`proficient`/`expert`) — **BE done** (`updateSkills`, 2026-10-06); the chip UI is still open
+- [ ] Free-text adds create a pending skill entry handled without breaking the FK contract — **BE gap: no pending path**
+- [ ] Skills drive the `profile_embedding` recompute job — **BE gap: no job enqueued**
 - [ ] Selecting and deselecting is undoable within the session
 
 ---
@@ -124,9 +128,11 @@ Searchable chip picker over `skills` (with `aliases`) + free-text add, per-skill
 
 Country, remote preference, hybrid days, minimum compensation + currency + period, visa requirement → the matching inputs in `profiles`.
 
+> **BE half landed 2026-10-06** — `updateLogistics` action (`f8d367e`), with the empty-salary rule fixed the same day: `minSalary: null` now writes `NULL` (clear the floor) where an earlier guard silently dropped it. **Open on the BE side:** `salaryCurrency` is only length-checked (3 chars), not allowlisted, and there is no SCR-001 parity test against `gates.ts`.
+
 **Done when:**
-- [ ] Remote preference writes `work_modes[]`; hybrid days only shown when hybrid selected
-- [ ] Salary accepts value + currency + period; empty salary = no floor (`NULL`), not `0`
+- [ ] Remote preference writes `work_modes[]`; hybrid days only shown when hybrid selected — **BE write done**; the conditional display is FE
+- [x] Salary accepts value + currency + period; empty salary = no floor (`NULL`), not `0` — **BE done** (`updateLogistics`, 2026-10-06; `null` clears, omitted leaves untouched, `0` rejected by `.positive()`)
 - [ ] Currency list is a fixed allowlist; period ∈ `year|month|hour`
 - [ ] Values are exactly what `gates.ts` reads (verified by the unit tests in SCR-001)
 
@@ -137,9 +143,11 @@ Country, remote preference, hybrid days, minimum compensation + currency + perio
 
 Blocked companies (typeahead), excluded keywords, preferred companies → `profiles.blocked_companies`, `excluded_keywords`, `preferred_companies`. `Finish` sets `onboarding_completed = true`.
 
+> **Partial BE half landed 2026-10-06** — `updateDealbreakers` action (`f8d367e`) writes all three arrays with lowercase/trim/dedupe normalisation and the 50-item schema cap. **Open on the BE side:** normalisation is not a slug and is not shared with E3, and nothing writes `onboarding_completed` — the `Finish` action does not exist yet.
+
 **Done when:**
-- [ ] Company typeahead normalises to `slug` (shared helper with dedupe in E3)
-- [ ] Keywords are normalised (lowercase, trimmed, deduped) and capped at a sane limit
+- [ ] Company typeahead normalises to `slug` (shared helper with dedupe in E3) — **BE gap: lowercased, not slugified, no shared helper**
+- [x] Keywords are normalised (lowercase, trimmed, deduped) and capped at a sane limit — **BE done** (`updateDealbreakers`, 2026-10-06; cap is `.max(50)`)
 - [ ] Finish sets `onboarding_completed`, fires `onboarding_completed` analytics event with `duration_s`
 - [ ] Finish enqueues the first ingestion run **and** shows the real progress interstitial (no fake loader)
 - [ ] Interstitial polls actual counters: sources scanned / jobs found / jobs scored
@@ -150,6 +158,8 @@ Blocked companies (typeahead), excluded keywords, preferred companies → `profi
 **[UI] [DATA]** · **Priority:** MUST · **Depends on:** ONB-005
 
 Settings pages to edit every onboarding field; saving triggers a `rescore_profile` task (never synchronous — C4).
+
+> **Mostly open.** The four mutation actions from ONB-002..005 (`f8d367e`) make the fields editable, which is the substrate this ticket needs — but **no action enqueues `rescore_profile`** (`rescore_profile` appears in `src/` only as a `task_kind` string in `src/types/db.ts`), and **no action performs the `updated_at` optimistic-concurrency check** that [03 §5.2](./03-security-and-access.md) requires for the two-tab case.
 
 **Done when:**
 - [ ] Every onboarding field is editable post-setup from `/settings`
@@ -163,6 +173,8 @@ Settings pages to edit every onboarding field; saving triggers a `rescore_profil
 **[UI]** · **Priority:** SHOULD · **Depends on:** ONB-005
 
 Per-channel, per-cadence digest controls: send time (IANA time zone), weekdays, max items, high-match threshold, mute.
+
+> **Not started, and blocked on schema.** `updateNotificationPrefsRequestSchema` exists in `src/types/api.ts`, but the columns it would write (`digest_enabled`, `digest_channel`, `high_match_alerts`) are **not** in [02a §5.3](./02a-schema.md) and not in any migration. `profiles` has `time_zone` and `last_digest_at` only. An action for this was written and then deleted during the 2026-10-06 BE-304 work rather than invent columns. Needs a schema ticket first.
 
 **Done when:**
 - [ ] User can set time + weekdays + item cap; resolved local time is previewed ("Every day at 8:00 AM (Asia/Kolkata)")

@@ -1079,3 +1079,53 @@ refresh token). Form posts get a 303 to `/login?signed_out=1`; JSON callers get 
 "Sign out" form lives on `/dashboard`. 4 tests; `signOut` is mocked, so the route's contract is
 what's pinned, not GoTrue. Verified locally with `pnpm db:reset` green.
 
+
+## BE-304 mutation half + review fixes 2026-10-06
+
+Four Server Actions for updating titles / skills / logistics / dealbreakers (`f8d367e`), then a
+two-axis review of that work against `docs/05b-phase1.md` and the repo standards, then the fixes.
+
+### Shipped
+
+`updateProfile` (ONB-002), `updateSkills` (ONB-003), `updateLogistics` (ONB-004),
+`updateDealbreakers` (ONB-005). Each resolves `requireUser()` before touching the DB and writes
+through `createUserClient()` (anon key + caller JWT), never the service-role client.
+
+### Two real bugs found by review, both fixed
+
+1. **A salary floor could never be cleared.** `pick()` guarded on
+   `minSalary !== undefined && minSalary !== null`, so the *only* input that means "no floor" was
+   silently dropped and an existing `min_salary` persisted. ONB-004 requires `NULL` = no floor, so
+   the spec's headline case was the broken one. Now `null` writes `NULL`, omitted leaves the column
+   untouched, and `0` is rejected upstream by `.positive()` (the old comment claimed `0` was being
+   normalised - that branch was unreachable).
+2. **A failed skills save wiped the user's skills.** `updateSkills` did delete-all then insert with
+   no compensation, so a failed insert returned `DATABASE_ERROR` and left the profile with *zero*
+   skills. It now snapshots first and restores on failure, mirroring the orphan-row rollback in
+   `upload-resume.ts`. Duplicate `skill_id`s are also rejected up front against the
+   `(profile_id, skill_id)` PK, instead of surfacing as `NOT_FOUND` ("skill does not exist").
+
+Both fixes are pinned by tests that were **verified to fail against the pre-fix code** (mutation
+check, reverted via backup copy - note `git checkout --` would have discarded the fix, since it was
+uncommitted).
+
+### Docs updated in the same change
+
+`docs/06-work-breakdown.md` (BE-304 no longer claims the actions are unbuilt) and
+`docs/05b-phase1.md` ONB-002..007, each BE bullet annotated done/open. The review's loudest standards
+finding was that `f8d367e` shipped 744 lines with zero doc changes.
+
+### Deliberately not done
+
+The four actions are near-identical clones (`SingleResult`, `pick()`, the catch block). Collapsing
+them into one helper is a worthwhile refactor but it is behaviour-preserving churn across files that
+are already pushed - separate change, not a bugfix.
+
+Still open for BE-304, now written down in the docs rather than only in this log: `rescore_profile`
+enqueue (ONB-006), the `onboarding_completed` write (ONB-005 Finish), `updated_at`
+optimistic-concurrency ([03 5.2](docs/03-security-and-access.md)), `revalidatePath` after mutation
+([02:183](docs/02-technical-architecture.md)), rate limiting ([03 S-07](docs/03-security-and-access.md)),
+title normalisation + `.min(1)`, a currency allowlist, the shared company-slug helper with E3, and a
+free-text pending-skill path. ONB-007 stays blocked on schema: `digest_enabled` / `digest_channel` /
+`high_match_alerts` are not columns in `02a-schema.md` or any migration, so the action was deleted
+rather than invent them.
