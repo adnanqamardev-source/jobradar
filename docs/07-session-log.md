@@ -1129,3 +1129,51 @@ title normalisation + `.min(1)`, a currency allowlist, the shared company-slug h
 free-text pending-skill path. ONB-007 stays blocked on schema: `digest_enabled` / `digest_channel` /
 `high_match_alerts` are not columns in `02a-schema.md` or any migration, so the action was deleted
 rather than invent them.
+## Shared profiles write path + concurrency guard 2026-10-06
+
+Follow-up to the BE-304 review. The review's duplication finding and its concurrency finding turned out
+to be the same fix: the logic that actually matters lives in one place, not three.
+
+### What changed
+
+`src/lib/db/profile-update.ts` is now the single write path for `profiles`. `updateProfile`,
+`updateLogistics` and `updateDealbreakers` each dropped their private `SingleResult`, their inline
+`.update().eq().select().single()` block, and their bespoke `DATABASE_ERROR` branch, and now call
+`updateOwnProfile(...)`. This resolves the four-way duplication the review flagged - as a side effect
+of extracting the part worth getting right, rather than as a cosmetic refactor.
+
+Two documented behaviours arrive with it:
+
+- **Optimistic concurrency** ([03 5.2](docs/03-security-and-access.md)). The caller sends the
+  `updated_at` it last read; the UPDATE is scoped by it. If another tab wrote first the WHERE matches
+  zero rows, which Postgres reports as success-with-no-data - the ambiguous case that made this hard.
+  `.select()` returning an *array* is therefore load-bearing: `.single()` would have errored on zero
+  rows and collapsed "row changed under you" into "something went wrong". New `edit_conflict` code,
+  409, with the 5.2 copy verbatim.
+- **`revalidatePath`** ([02:183](docs/02-technical-architecture.md)), on success only.
+
+The guard is **opt-in**. A caller that omits `expectedUpdatedAt` keeps the old unguarded behaviour, so
+the onboarding wizard is unaffected; `/settings` is the caller that must send it. This is deliberate -
+making it mandatory would have broken every existing caller for no security gain.
+
+### Also fixed while in there
+
+- `edit_conflict` added to `src/lib/errors/codes.ts`. Upstream error text is still never surfaced to
+  the user (pinned by a test).
+- `updateSkills` now logs via `logger.error`, matching the sibling actions. The review noted the new
+  actions swallowed errors silently - the skills compensation is exactly the case where you need the
+  log line.
+
+### Verification
+
+`pnpm typecheck` 0, `pnpm lint` 0, `pnpm test` 25 files / 330 passed. The concurrency guard was
+mutation-checked: forcing it off makes 2 of the 7 new tests in `tests/unit/profile-update.test.ts`
+fail, so the guard is load-bearing rather than incidentally green.
+
+### Not done
+
+`rescore_profile` enqueue (ONB-006) and the `onboarding_completed` write (ONB-005 `Finish`) are still
+open - both need a task-queue call site that does not exist yet, which is a larger design question
+than a bugfix. Rate limiting ([03 S-07](docs/03-security-and-access.md)) remains unimplemented across
+all actions: `lib/ratelimit.ts` does not exist and no sibling action calls it, so that is a new module
+rather than a wiring change.

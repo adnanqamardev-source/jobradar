@@ -60,6 +60,12 @@ export type OtpVerifyRequest = z.infer<typeof otpVerifyRequestSchema>;
 // Profile & Preferences (BE-304)
 // ---------------------------------------------------------------------------
 
+/**
+ * The `updated_at` the caller last read, for the docs/03 §5.2 two-tab guard.
+ * Optional: callers that don't track it (the onboarding wizard) skip the check.
+ */
+const expectedUpdatedAt = z.string().datetime({ offset: true }).optional();
+
 /** Update profile — titles, seniority, headline. */
 export const updateProfileRequestSchema = z.object({
   targetTitles: z.array(z.string()).max(10).optional(),
@@ -69,6 +75,7 @@ export const updateProfileRequestSchema = z.object({
   yearsExperience: z.number().min(0).max(60).optional(),
   headline: z.string().max(200).optional(),
   fullName: z.string().max(100).optional(),
+  expectedUpdatedAt,
 });
 export type UpdateProfileRequest = z.infer<typeof updateProfileRequestSchema>;
 
@@ -83,6 +90,7 @@ export const updateLogisticsRequestSchema = z.object({
   salaryCurrency: z.string().length(3).optional(),
   salaryPeriod: z.enum(["year", "month", "hour"]).optional(),
   visaRequired: z.boolean().optional(),
+  expectedUpdatedAt,
 });
 export type UpdateLogisticsRequest = z.infer<typeof updateLogisticsRequestSchema>;
 
@@ -91,6 +99,7 @@ export const updateDealbreakersRequestSchema = z.object({
   blockedCompanies: z.array(z.string()).max(50).optional(),
   excludedKeywords: z.array(z.string()).max(50).optional(),
   preferredCompanies: z.array(z.string()).max(50).optional(),
+  expectedUpdatedAt,
 });
 export type UpdateDealbreakersRequest = z.infer<typeof updateDealbreakersRequestSchema>;
 

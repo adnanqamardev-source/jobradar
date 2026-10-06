@@ -76,6 +76,12 @@ export const ERROR_CODES = {
     httpStatus: 500,
     message: "Something went wrong. Try again.",
   },
+  edit_conflict: {
+    code: "edit_conflict",
+    httpStatus: 409,
+    // Verbatim from docs/03 §5.2 "Concurrent edits (two tabs)".
+    message: "This changed in another tab. Reload to see the latest.",
+  },
   file_too_large: {
     code: "file_too_large",
     httpStatus: 413,

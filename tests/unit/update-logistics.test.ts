@@ -39,6 +39,13 @@ vi.mock("@supabase/supabase-js", () => ({
   createClient: createClientMock,
 }));
 
+// `updateOwnProfile` calls revalidatePath on success; the real one throws outside
+// a request scope.
+vi.mock("next/cache", () => ({
+  revalidatePath: vi.fn(),
+  revalidateTag: vi.fn(),
+}));
+
 import { updateLogistics } from "@/app/api/actions/profile/update-logistics";
 
 /** Captures the payload handed to `.update()`. */
@@ -63,25 +70,43 @@ function signIn() {
   });
 }
 
-/** A `profiles` update chain that records its payload. */
-function profileUpdateChain(result: { data: unknown; error: unknown }) {
+/**
+ * A `profiles` update chain matching `updateOwnProfile`'s shape:
+ * `.update(payload).eq(...)` — optionally `.eq(...)` again for the concurrency
+ * guard — then `.select()` resolving an **array** (not `.single()`, which would
+ * error on zero rows and hide the guard's 0-row case).
+ */
+function profileUpdateChain(
+  result: { rows: unknown[]; error?: { message: string } | null },
+) {
   const update = vi.fn((payload: Record<string, unknown>) => {
     updatePayload = payload;
-    return {
-      eq: vi.fn().mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue(result),
-        }),
-      }),
-    };
+    const select = vi.fn().mockResolvedValue({
+      data: result.rows,
+      error: result.error ?? null,
+    });
+    // Self-referential so `.eq()` can be chained twice (id, then updated_at).
+    const chain: { eq?: unknown; select?: unknown } = { select };
+    const eq = vi.fn().mockReturnValue(chain);
+    chain.eq = eq;
+    return chain;
   });
   return { update };
+}
+
+/** Rows the helper treats as a successful single-row update. */
+const ONE_ROW = [{ id: "u1" }];
+
+/** The action returns a discriminated union, so `res.error` needs narrowing. */
+function errCode(res: { ok: boolean }): string | undefined {
+  if (res.ok) return undefined;
+  return (res as { error?: { code?: string } }).error?.code;
 }
 
 describe("updateLogistics — salary floor", () => {
   it("writes a positive floor as given", async () => {
     signIn();
-    mockFrom.mockReturnValue(profileUpdateChain({ data: { id: "u1" }, error: null }));
+    mockFrom.mockReturnValue(profileUpdateChain({ rows: ONE_ROW }));
 
     const res = await updateLogistics({ minSalary: 120000 });
 
@@ -91,7 +116,7 @@ describe("updateLogistics — salary floor", () => {
 
   it("clears the floor when minSalary is explicitly null", async () => {
     signIn();
-    mockFrom.mockReturnValue(profileUpdateChain({ data: { id: "u1" }, error: null }));
+    mockFrom.mockReturnValue(profileUpdateChain({ rows: ONE_ROW }));
 
     const res = await updateLogistics({ minSalary: null });
 
@@ -103,7 +128,7 @@ describe("updateLogistics — salary floor", () => {
 
   it("leaves min_salary untouched when minSalary is omitted", async () => {
     signIn();
-    mockFrom.mockReturnValue(profileUpdateChain({ data: { id: "u1" }, error: null }));
+    mockFrom.mockReturnValue(profileUpdateChain({ rows: ONE_ROW }));
 
     const res = await updateLogistics({ city: "Bengaluru" });
 
@@ -116,14 +141,14 @@ describe("updateLogistics — salary floor", () => {
     const res = await updateLogistics({ minSalary: 0 });
 
     expect(res.ok).toBe(false);
-    expect(res.error?.code).toBe("VALIDATION_ERROR");
+    expect(errCode(res)).toBe("VALIDATION_ERROR");
   });
 
   it("rejects a currency that is not 3 characters", async () => {
     const res = await updateLogistics({ salaryCurrency: "DOLLAR" });
 
     expect(res.ok).toBe(false);
-    expect(res.error?.code).toBe("VALIDATION_ERROR");
+    expect(errCode(res)).toBe("VALIDATION_ERROR");
   });
 
   it("rejects an unknown salary period", async () => {
@@ -132,7 +157,7 @@ describe("updateLogistics — salary floor", () => {
     } as unknown as { salaryPeriod: "year" });
 
     expect(res.ok).toBe(false);
-    expect(res.error?.code).toBe("VALIDATION_ERROR");
+    expect(errCode(res)).toBe("VALIDATION_ERROR");
   });
 });
 
@@ -152,12 +177,12 @@ describe("updateLogistics — guard and column map", () => {
     const res = await updateLogistics({});
 
     expect(res.ok).toBe(false);
-    expect(res.error?.code).toBe("NO_FIELDS");
+    expect(errCode(res)).toBe("NO_FIELDS");
   });
 
   it("maps camelCase input to snake_case columns", async () => {
     signIn();
-    mockFrom.mockReturnValue(profileUpdateChain({ data: { id: "u1" }, error: null }));
+    mockFrom.mockReturnValue(profileUpdateChain({ rows: ONE_ROW }));
 
     const res = await updateLogistics({
       workModes: ["remote", "hybrid"],
@@ -183,11 +208,11 @@ describe("updateLogistics — guard and column map", () => {
 
   it("returns DATABASE_ERROR when the update fails", async () => {
     signIn();
-    mockFrom.mockReturnValue(profileUpdateChain({ data: null, error: { message: "rls" } }));
+    mockFrom.mockReturnValue(profileUpdateChain({ rows: [], error: { message: "rls denied" } }));
 
     const res = await updateLogistics({ city: "Bengaluru" });
 
     expect(res.ok).toBe(false);
-    expect(res.error?.code).toBe("DATABASE_ERROR");
+    expect(errCode(res)).toBe("DATABASE_ERROR");
   });
 });

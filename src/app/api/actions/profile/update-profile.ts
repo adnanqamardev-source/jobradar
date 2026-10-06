@@ -26,19 +26,10 @@ import { z } from "zod";
 import { AppError } from "@/lib/errors";
 import { requireUser } from "@/lib/auth/require-user";
 import { createUserClient } from "@/lib/db/user-client";
+import { updateOwnProfile, type ProfileUpdateResult } from "@/lib/db/profile-update";
 import { updateProfileRequestSchema } from "@/types/api";
-import type { ProfileRow } from "@/types/db";
 
-interface SingleResult<T> {
-  data: T | null;
-  error: { message: string } | null;
-}
-
-export interface UpdateProfileResult {
-  ok: boolean;
-  data?: { profile: ProfileRow };
-  error?: { code: string; message: string };
-}
+export type UpdateProfileResult = ProfileUpdateResult;
 
 function pick(
   input: z.infer<typeof updateProfileRequestSchema>,
@@ -68,24 +59,13 @@ export async function updateProfile(
       };
     }
 
-    const result = (await supabase
-      .from("profiles")
-      .update(updates)
-      .eq("id", user.id)
-      .select()
-      .single()) as SingleResult<ProfileRow>;
-
-    if (result.error || !result.data) {
-      return {
-        ok: false,
-        error: {
-          code: "DATABASE_ERROR",
-          message: result.error?.message ?? "Failed to update profile",
-        },
-      };
-    }
-
-    return { ok: true, data: { profile: result.data } };
+    return updateOwnProfile(
+      supabase,
+      user.id,
+      updates,
+      parsed.expectedUpdatedAt,
+      "Failed to update profile",
+    );
   } catch (error) {
     if (error instanceof z.ZodError) {
       return {

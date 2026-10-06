@@ -37,6 +37,13 @@ vi.mock("@supabase/supabase-js", () => ({
   createClient: createClientMock,
 }));
 
+// `updateOwnProfile` calls revalidatePath on success; the real one throws outside
+// a request scope.
+vi.mock("next/cache", () => ({
+  revalidatePath: vi.fn(),
+  revalidateTag: vi.fn(),
+}));
+
 import { updateProfile } from "@/app/api/actions/profile/update-profile";
 import { AppError } from "@/lib/errors";
 
@@ -48,13 +55,30 @@ beforeEach(() => {
   createClientMock.mockReturnValue({ from: mockFrom });
 });
 
-function profileChain(result: { data: unknown; error: unknown }) {
-  return {
-    update: vi.fn().mockReturnThis(),
-    eq: vi.fn().mockReturnThis(),
-    select: vi.fn().mockReturnThis(),
-    single: vi.fn().mockResolvedValue(result),
-  };
+/**
+ * Matches `updateOwnProfile`'s chain shape: `.update().eq()[/.eq()].select()`,
+ * resolving an **array**. The previous revision used `.single()`, which errors on
+ * zero rows and therefore could not express the concurrency guard's 0-row case.
+ */
+function profileChain(result: { rows: unknown[]; error?: { message: string } | null }) {
+  const update = vi.fn(() => {
+    const select = vi.fn().mockResolvedValue({ data: result.rows, error: result.error ?? null });
+    // Self-referential so `.eq()` can be chained twice (id, then updated_at).
+    const chain: { eq?: unknown; select?: unknown } = { select };
+    const eq = vi.fn().mockReturnValue(chain);
+    chain.eq = eq;
+    return chain;
+  });
+  return { update };
+}
+
+/** Rows the helper treats as a successful single-row update. */
+const ONE_ROW = [{ id: "u1", target_titles: ["Engineer"] }];
+
+/** The action returns a discriminated union, so `res.error` needs narrowing. */
+function errCode(res: { ok: boolean }): string | undefined {
+  if (res.ok) return undefined;
+  return (res as { error?: { code?: string } }).error?.code;
 }
 
 describe("updateProfile", () => {
@@ -75,7 +99,7 @@ describe("updateProfile", () => {
     getSessionMock.mockResolvedValue({
       data: { session: { access_token: "user-jwt" } },
     });
-    mockFrom.mockReturnValue(profileChain({ data: { id: "u1", target_titles: ["Engineer"] }, error: null }));
+    mockFrom.mockReturnValue(profileChain({ rows: ONE_ROW }));
 
     const res = await updateProfile({ targetTitles: ["Engineer"] });
 
@@ -92,7 +116,7 @@ describe("updateProfile", () => {
     const res = await updateProfile({ targetTitles: 123 } as unknown as { targetTitles: string[] });
 
     expect(res.ok).toBe(false);
-    expect(res.error?.code).toBe("VALIDATION_ERROR");
+    expect(errCode(res)).toBe("VALIDATION_ERROR");
   });
 
   it("returns DATABASE_ERROR when the update fails", async () => {
@@ -103,12 +127,12 @@ describe("updateProfile", () => {
     getSessionMock.mockResolvedValue({
       data: { session: { access_token: "user-jwt" } },
     });
-    mockFrom.mockReturnValue(profileChain({ data: null, error: { message: "rls denied" } }));
+    mockFrom.mockReturnValue(profileChain({ rows: [], error: { message: "rls denied" } }));
 
     const res = await updateProfile({ targetTitles: ["Engineer"] });
 
     expect(res.ok).toBe(false);
-    expect(res.error?.code).toBe("DATABASE_ERROR");
+    expect(errCode(res)).toBe("DATABASE_ERROR");
   });
 
   it("propagates AppError (unauthenticated) rather than swallowing it", async () => {

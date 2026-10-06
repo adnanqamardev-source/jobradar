@@ -159,12 +159,12 @@ Blocked companies (typeahead), excluded keywords, preferred companies → `profi
 
 Settings pages to edit every onboarding field; saving triggers a `rescore_profile` task (never synchronous — C4).
 
-> **Mostly open.** The four mutation actions from ONB-002..005 (`f8d367e`) make the fields editable, which is the substrate this ticket needs — but **no action enqueues `rescore_profile`** (`rescore_profile` appears in `src/` only as a `task_kind` string in `src/types/db.ts`), and **no action performs the `updated_at` optimistic-concurrency check** that [03 §5.2](./03-security-and-access.md) requires for the two-tab case.
+> **Partially open.** The four mutation actions from ONB-002..005 (`f8d367e`) make the fields editable, which is the substrate this ticket needs. The `updated_at` optimistic-concurrency check required by [03 §5.2](./03-security-and-access.md) **is now implemented** (2026-10-06) in `lib/db/profile-update.ts`: the shared write path scopes the UPDATE by the `updated_at` the caller last read and returns `edit_conflict` when another tab wrote first. It is opt-in — `/settings` must send `expectedUpdatedAt` for the two-tab message to appear. **Still open: no action enqueues `rescore_profile`** (`rescore_profile` appears in `src/` only as a `task_kind` string in `src/types/db.ts`).
 
 **Done when:**
 - [ ] Every onboarding field is editable post-setup from `/settings`
 - [ ] Save enqueues `rescore_profile`; the UI shows "Rescoring your feed…" then a toast on completion
-- [ ] Concurrent edit from two tabs → optimistic-concurrency message from [03 §5.2](./03-security-and-access.md)
+- [ ] Concurrent edit from two tabs → optimistic-concurrency message from [03 §5.2](./03-security-and-access.md) — **BE done** (2026-10-06, `lib/db/profile-update.ts`); the FE must pass `expectedUpdatedAt` for it to fire
 - [ ] Changes are reflected in new scores; historical scores are replaced, not duplicated
 
 ---
