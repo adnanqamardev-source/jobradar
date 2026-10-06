@@ -1177,3 +1177,61 @@ open - both need a task-queue call site that does not exist yet, which is a larg
 than a bugfix. Rate limiting ([03 S-07](docs/03-security-and-access.md)) remains unimplemented across
 all actions: `lib/ratelimit.ts` does not exist and no sibling action calls it, so that is a new module
 rather than a wiring change.
+## Integration tests + a real schema bug 2026-10-06
+
+Closed the loop on the gap raised at the end of the last session: the three defects
+that passed CI all lived in code whose unit tests mock Supabase, so a mock defined the
+answer and nothing could fail unless someone already suspected the bug.
+
+### Docker
+
+Docker Desktop is installed at `C:\Users\adnan\AppData\Local\Programs\DockerDesktop`
+- not the usual `C:\Program Files\Docker`, which is why an earlier check reported it
+absent. The local Supabase stack auto-starts with it (`supabase_db_jobradar` et al,
+daemon 29.8.1).
+
+The Supabase MCP points at **production** (`diuwzagrpqhlutbqdvrs`), not local. It was
+used read-only; the integration test talks to `127.0.0.1:54321` directly.
+
+### The test
+
+`tests/integration/profile-mutations.db.test.ts` - 8 tests, 7 passing. It creates real
+auth users (so `0005`'s trigger is exercised, and `profiles.id`'s FK to `auth.users`
+is respected), real `skills` rows, and asserts what a mock cannot: that a stale
+`updated_at` really yields zero rows **and that Postgres reports it as success, not an
+error**, that the salary floor really clears to NULL, that `ON DELETE CASCADE` really
+takes `profile_skills`, and that a duplicate really violates the PK.
+
+Skips cleanly when `TEST_SUPABASE_URL` / `TEST_SUPABASE_SERVICE_ROLE` are unset, so CI
+is unaffected. Refuses to run unless the URL is 127.0.0.1/localhost.
+
+### What it found
+
+**`profiles.updated_at` never changes on UPDATE.** There is no trigger - only a `now()`
+default, which applies to INSERT. `resumes` has `resumes_updated_at`; `profiles` has
+nothing. Proven two ways: a stale-`updated_at` update still returned a row, and a
+direct read showed `updated_at` byte-identical either side of an UPDATE.
+
+So the concurrency guard added in `2def404` **does not work**. It is correct code
+against a column that never moves, so it always matches and the two-tab case silently
+clobbers - exactly the pre-`2def404` behaviour it was written to prevent. Unit tests
+could not have caught this; the mock asserted its own `.eq()` calls and never asked
+whether `updated_at` changes.
+
+Left as an **intentionally failing test** pinning the fix, since the fix is migration
+`0006` (a schema change, which AGENTS.md says to ask about first). `pnpm test` shows
+`330 passed | 8 skipped`; the failing test only appears with the env vars set.
+
+`pnpm typecheck` 0, `pnpm lint` 0.
+
+### Still not done
+
+`rescore_profile` enqueue stays blocked: `task_queue` is RLS-enabled with no client
+policies (service-role only), so a user action cannot enqueue. It needs either a
+`security definer` RPC or service-role from a user action, and the latter breaks the
+repo's own "never service-role for user-facing work" rule. That is a design decision,
+not a wiring one.
+
+Untouched from the earlier list: `onboarding_completed` write (ONB-005 Finish), rate
+limiting (`lib/ratelimit.ts` does not exist), title normalisation + `.min(1)`, the
+currency allowlist, the shared company-slug helper with E3, and free-text pending skills.
