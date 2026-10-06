@@ -511,6 +511,48 @@ step and the UI offers a country filter that silently returns nothing, which is 
    row-level security policies on `jobs` and `job_scores`. `security_invoker = true` makes the
    view run as the caller, so RLS applies. This one is not optional.
 
+-- Create the profiles row for a new auth user (BE-304, migration 0005).
+--
+-- One trigger rather than one code path per auth method: magic link, Google and OTP would
+-- otherwise each have to remember to create the row, and a user without one is invisible to the
+-- scorer, the feed and every owner-scoped policy.
+--
+-- SECURITY DEFINER because the trigger fires inside the auth service's insert, where the caller
+-- is not yet an authenticated principal, and `profiles` carries FORCE ROW LEVEL SECURITY — so the
+-- insert needs the definer's bypass role. `set search_path = ''` is the privilege-escalation
+-- guard: with a mutable search_path, any caller able to create a schema could shadow `auth` or
+-- `public` and execute as the definer. Every name is therefore fully qualified.
+--
+-- `role` is deliberately NOT read from `raw_user_meta_data`: that field is user-writable through
+-- the client SDK, so honouring a `role` key there would be admin self-assignment (docs/03 §3.2).
+--
+-- Bare `on conflict do nothing`, not `on conflict (id)`: an arbiter clause covers only the
+-- constraint it names, and `email` is unique too. A duplicate address would raise
+-- `unique_violation` inside this AFTER INSERT trigger, aborting the `auth.users` insert and
+-- denying the user a session. Two arbiter clauses is a syntax error.
+create or replace function handle_new_user() returns trigger
+language plpgsql security definer set search_path = '' as $$
+declare
+  -- `profiles.email` is NOT NULL UNIQUE; the placeholder is derived from the id so two
+  -- phone-only signups cannot collide on it.
+  v_email text := coalesce(new.email, new.id::text || '@no-email.invalid');
+begin
+  insert into public.profiles (id, email, full_name, avatar_url)
+  values (
+    new.id,
+    v_email,
+    nullif(new.raw_user_meta_data ->> 'full_name', ''),
+    nullif(new.raw_user_meta_data ->> 'avatar_url', '')
+  )
+  on conflict do nothing;
+  return new;
+end;
+$$;
+
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function handle_new_user();
+
 -- Used by the "new since last visit" badge
 create function recent_for_user(uid uuid, since timestamptz)
 returns setof uuid …;

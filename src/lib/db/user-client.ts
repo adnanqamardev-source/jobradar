@@ -16,9 +16,14 @@
  * claims. The service-role key never enters this file.
  */
 
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { createClient as createSupabaseClient, type SupabaseClient } from "@supabase/supabase-js";
 
-import type { SupabaseClient } from "./admin";
+/**
+ * Re-exported so a client-reachable module can *type* a client without importing
+ * `@supabase/supabase-js` (restricted by `no-restricted-imports`) or `lib/db/admin`
+ * (restricted because it holds the service-role key). `lib/db/queries/**` uses this.
+ */
+export type { SupabaseClient };
 
 /**
  * Create a Supabase client scoped to one user's access token. RLS applies.

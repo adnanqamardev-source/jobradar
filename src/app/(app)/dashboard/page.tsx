@@ -9,106 +9,88 @@
  * though auth worked. Its only job is to terminate the redirect honestly: prove the
  * session is real, show what is in the user's own row, and get out of the way.
  *
- * It is deliberately unstyled and it adds no design opinions (Phase 3 owns those).
+ * ## Known phase-rule exception
  *
- * ## Why it is a Server Component that reads the database
+ * AGENTS.md says Phase 1 has "no page files". This one is a deliberate, documented exception:
+ * it is the only page in the tree that is not Phase 2 work, and it carries no design
+ * opinions — no colours, no spacing decisions beyond the structural minimum. The alternative
+ * was leaving every successful sign-in on a 404.
+ *
+ * ## Why it reads the database
  *
  * Rendering "signed in as <email>" from a claim proves nothing. Reading the user's own
- * `profiles` row through `createUserClient` exercises the whole chain in one screen:
- * cookie session → `requireUser()` → user-scoped anon client → RLS allowing exactly
- * that row and nothing else. If BE-302 or BE-304 were broken, this page breaks, which is
- * the point — a green login screen with an empty database behind it hid this for days.
+ * `profiles` row through the RLS-scoped client exercises the whole chain in one screen:
+ * cookie session → `requireUser()` → user-scoped anon client → RLS allowing exactly that
+ * row and nothing else. If BE-302 or BE-304 were broken, this page breaks, which is the point.
  */
 
 import { redirect } from "next/navigation";
 
 import { requireUser, type AuthenticatedUser } from "@/lib/auth/require-user";
 import { createUserClient } from "@/lib/db/user-client";
+import { getOwnProfileSummary } from "@/lib/db/queries/profile";
 import { AppError } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";
-
-/** Narrow shape — the client is untyped, so `any` is cast once, here. */
-interface ProfileSummary {
-  email: string | null;
-  full_name: string | null;
-  onboarding_completed: boolean | null;
-  onboarding_step: number | null;
-}
 
 export default async function DashboardPage() {
   let user: AuthenticatedUser;
   try {
     user = await requireUser();
   } catch (error) {
-    // docs/05b AUT-003: an unauthenticated hit on an (app) route goes to /login with a
-    // return path, never an error wall. Anything else is a real failure and propagates.
+    // docs/05b AUT-003: an unauthenticated hit on an (app) route goes to /login with a return
+    // path, never an error wall. Anything else is a real failure and propagates.
     if (AppError.isAppError(error) && error.code === "unauthenticated") {
-      redirect("/login?next=/dashboard");
+      redirect(`/login?next=${encodeURIComponent("/dashboard")}`);
     }
     throw error;
   }
 
   const supabase = await createUserClient(user.accessToken);
-  const result = (await supabase
-    .from("profiles")
-    .select("email, full_name, onboarding_completed, onboarding_step")
-    .eq("id", user.id)
-    .maybeSingle()) as { data: ProfileSummary | null; error: { message: string } | null };
+  const profile = await getOwnProfileSummary(supabase, user.id);
 
-  const profile = result.data;
-  // An empty or whitespace-only name is not a display name, so it falls back to the id.
-  // Written as an explicit length check rather than `||`: `||` is correct here but
-  // `@typescript-eslint/prefer-nullish-coalescing` bans it on a nullable string, and
-  // `??` would keep the empty string and render a blank heading.
   const trimmedName = profile?.full_name?.trim();
-  const displayName = trimmedName !== undefined && trimmedName.length > 0 ? trimmedName : user.id;
+  const displayName =
+    trimmedName !== undefined && trimmedName.length > 0 ? trimmedName : user.id;
 
   return (
-    <main className="p-6">
-      <h1 className="text-h1 font-sans font-semibold">Dashboard</h1>
+    <main>
+      <h1>Dashboard</h1>
 
       {/*
-        A missing profile row here means BE-304's trigger did not fire for this signup.
-        Say so explicitly rather than rendering an empty shell: a silent blank dashboard is
-        the exact failure this page exists to make visible.
+        A missing profile row here means BE-304's `handle_new_user()` trigger did not fire for
+        this signup. Say so explicitly rather than rendering an empty shell: a silent blank
+        dashboard is the exact failure this page exists to make visible.
       */}
-      {result.error || !profile ? (
+      {profile === null ? (
         <section aria-labelledby="profile-missing">
-          <h2 id="profile-missing" className="text-h2 font-sans font-medium mt-6">
-            Profile not created
-          </h2>
-          <p className="text-body text-ink-2 mt-2">
-            Your sign-in worked, but no profile row exists for <code>{displayName}</code>. This
-            is a server-side bug in <code>handle_new_user()</code>, not something you did wrong.
+          <h2 id="profile-missing">Profile not created</h2>
+          <p>
+            Your sign-in worked, but no profile row exists for <code>{displayName}</code>. This is
+            a server-side bug, not something you did wrong.
           </p>
         </section>
       ) : (
         <section aria-labelledby="account">
-          <h2 id="account" className="text-h2 font-sans font-medium mt-6">
-            Account
-          </h2>
-          <dl className="mt-2 grid gap-2">
-            <dt className="label">Email</dt>
-            <dd className="text-body">{profile.email}</dd>
-            <dt className="label">Role</dt>
-            <dd className="text-body">{user.role}</dd>
-            <dt className="label">Plan</dt>
-            <dd className="text-body">Onboarding {profile.onboarding_completed ? "complete" : "in progress"}</dd>
+          <h2 id="account">Account</h2>
+          <dl>
+            <dt>Email</dt>
+            <dd>{profile.email}</dd>
+            <dt>Name</dt>
+            <dd>{displayName}</dd>
+            <dt>Role</dt>
+            <dd>{user.role}</dd>
+            <dt>Plan</dt>
+            <dd>{profile.plan}</dd>
+            <dt>Onboarding</dt>
+            <dd>
+              {profile.onboarding_completed
+                ? "Complete"
+                : `In progress — step ${profile.onboarding_step} of 4`}
+            </dd>
           </dl>
         </section>
       )}
-
-      <section aria-labelledby="next" className="mt-8">
-        <h2 id="next" className="text-h2 font-sans font-medium">
-          What is not built yet
-        </h2>
-        <p className="text-body text-ink-2 mt-2">
-          The ranked job feed (<code>FE-105</code>) and the onboarding wizard (
-          <code>FE-102</code>) are Phase 2. This page is a placeholder landing target, not
-          the dashboard you will use.
-        </p>
-      </section>
     </main>
   );
 }

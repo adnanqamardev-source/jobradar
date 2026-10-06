@@ -43,6 +43,21 @@ declare
   -- never collide on the unique index. Coalescing every null to '' would.
   v_email text := coalesce(new.email, new.id::text || '@no-email.invalid');
 begin
+  -- Guarded against BOTH unique indexes on `profiles`: `id` and `email`.
+  --
+  -- `on conflict (id)` alone handles only the primary key. `email` is also unique, so a
+  -- signup whose address already has a profile row would raise `unique_violation` *inside*
+  -- this AFTER INSERT trigger — which aborts the `auth.users` insert, and the user gets no
+  -- session at all. A profile-creation failure must never be able to break sign-in.
+  --
+  -- Reachable in practice? `auth.users.email` is itself unique, so a live duplicate signup
+  -- is normally rejected upstream by GoTrue before this trigger runs. "Normally" is not
+  -- "provably never" — an operator-inserted auth row, or a future provider that does not
+  -- deduplicate, would hit it. The guard costs one clause and removes the question.
+  --
+  -- No arbiter: bare `on conflict do nothing` covers every unique constraint at once. Naming
+  -- two targets as `on conflict (id) do nothing on conflict (email) do nothing` is a **syntax
+  -- error** — Postgres allows one arbiter clause per INSERT — which `pnpm db:reset` caught.
   insert into public.profiles (id, email, full_name, avatar_url)
   values (
     new.id,
@@ -50,7 +65,7 @@ begin
     nullif(new.raw_user_meta_data ->> 'full_name', ''),
     nullif(new.raw_user_meta_data ->> 'avatar_url', '')
   )
-  on conflict (id) do nothing;
+  on conflict do nothing;
 
   return new;
 end;
