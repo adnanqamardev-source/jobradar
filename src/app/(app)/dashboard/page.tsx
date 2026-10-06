@@ -91,6 +91,9 @@ export default async function DashboardPage() {
           </dl>
         </section>
       )}
+      <form action="/api/auth/logout" method="POST" className="mt-8">
+        <button type="submit">Sign out</button>
+      </form>
     </main>
   );
 }

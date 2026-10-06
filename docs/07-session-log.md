@@ -1062,12 +1062,20 @@ exists to surface.
 
 ## Still open
 
-- **`0005` is not on the hosted project yet** — deliberately, pending review of this work.
+- ~~**`0005` is not on the hosted project yet**~~ — **applied 2026-10-06** via `apply_migration`;
+  verified `trigger_installed = 1`, bare `on conflict do nothing`, `search_path = ''` set.
 - The private `resumes` storage bucket does not exist; `0002`'s storage policies reference
   `bucket_id = 'resumes'`, so uploads fail until it is created.
 - `skills` is empty in production — `seed.sql` was never applied there, so skill matching has no
   vocabulary.
-- No logout route (AUT-003), so sessions cannot be ended.
 - `docs/03` §2.2 token lifetimes (1h access / 30d refresh) are not implemented; Supabase defaults
   apply.
+
+## Logout route added 2026-10-06
+
+`POST /api/auth/logout` shipped. It calls `supabase.auth.signOut()` — server-side token revocation
+plus SSR cookie clear in one call (`docs/03` §2.2 required *both*; local-only logout leaves a usable
+refresh token). Form posts get a 303 to `/login?signed_out=1`; JSON callers get `{ok:true}`. A
+"Sign out" form lives on `/dashboard`. 4 tests; `signOut` is mocked, so the route's contract is
+what's pinned, not GoTrue. Verified locally with `pnpm db:reset` green.
 

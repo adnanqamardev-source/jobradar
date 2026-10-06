@@ -76,7 +76,7 @@ required before the button does anything:
 | Refresh token lifetime | **30 days**, sliding | Long enough that a returning user isn't logged out weekly; short enough to bound risk. |
 | Cookie | `httpOnly`, `Secure`, `SameSite=Lax`, `__Host-` prefix | Not readable by JS (blocks XSS token theft); `Lax` still allows navigation links from the digest email. |
 | Refresh rotation | Enabled | A stolen refresh token is invalidated once it's used. |
-| Logout | Server-side sign-out **and** cookie clear | Local-only logout leaves a usable token. |
+| Logout | Server-side sign-out **and** cookie clear | Local-only logout leaves a usable token. Implemented at `POST /api/auth/logout` (2026-10-06). |
 | Session invalidation on privilege change | On `role` or `plan` downgrade | A demoted admin must not keep admin access for up to 24h. |
 | Concurrent sessions | Allowed, no cap | Not worth the support burden at MVP. |
 

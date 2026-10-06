@@ -44,7 +44,7 @@ Implement `lib/auth/session.ts` (`getServerSession`, `requireUser`, `requireAdmi
 **Done when:**
 - [ ] Unauthenticated hit on any `(app)` route → `/login?next=…`, then restored after sign-in
 - [ ] Access token refreshes silently; an expired refresh token → clean `/login` with return path
-- [ ] Logout clears cookies **and** invalidates the refresh token server-side
+- [x] Logout clears cookies **and** invalidates the refresh token server-side — implemented 2026-10-06: `POST /api/auth/logout` calls `supabase.auth.signOut()` (server-side revocation + SSR cookie clear), form post → 303 `/login?signed_out=1`, JSON → `{ok:true}`. 4 tests.
 - [ ] `/admin` as a non-admin → redirect to `/dashboard` with the neutral message (never a 403 wall)
 - [ ] Role change is picked up without waiting for token expiry (test: demoted admin bounces off `/admin`)
 
