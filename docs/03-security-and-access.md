@@ -43,6 +43,28 @@ Three ideas carry the whole document:
 
 **Why magic link + OAuth, not passwords:** passwords generate the entire class of credential-stuffing, reuse and phishing risk, and for a job-search tool nobody wants to manage another password. OAuth adds a familiar one-click path for the 60%+ who have a Google account. OTP is kept as a fallback because magic links fail silently in some corporate mail clients â€” a real onboarding-abandonment cause.
 
+**Google OAuth is not enabled by writing code.** `POST /api/auth/google` only asks Supabase to
+start a flow; the provider itself must be configured on the project. Two halves, and *both* are
+required before the button does anything:
+
+| Half | Where | Who can do it |
+|---|---|---|
+| OAuth client (id + secret) | Google Cloud Console → APIs & Services → Credentials | **the project owner** — needs a Google account and the consent screen |
+| Provider enabled + redirect URI allowlist | Supabase → Auth → Providers / URL Configuration, or `supabase config push` | needs `supabase login` first (interactive, owner's browser) |
+
+**Three traps, all hit on 2026-10-05:**
+
+1. The button 404ing on the deployed site meant the route had never been pushed — check
+   `git status -sb` for `[ahead N]` before touching provider settings.
+2. `env(...)` in `supabase/config.toml` matches the **whole value only** — the CLI's hook is
+   `^env\((.*)\)$` (`supabase/cli` `pkg/config/decode_hooks.go`). A composed value such as
+   `env(NEXT_PUBLIC_APP_URL)/auth/callback` is *never* interpolated and is sent to Google as that
+   literal string, so a composed redirect must be its own single env var
+   (`SUPABASE_AUTH_EXTERNAL_GOOGLE_REDIRECT_URI`).
+3. Google is one of only two OAuth providers whose config schema accepts an empty `secret`, but
+   `client_id` is still mandatory. Enabling the provider with a blank client id produces a consent
+   screen that fails with an opaque Google-side error, not a Supabase one.
+
 ### 2.2 Session rules
 
 **Last reviewed:** 2026-10-04

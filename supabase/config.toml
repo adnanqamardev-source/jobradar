@@ -31,9 +31,13 @@ max_frequency = "10m"   # 3 links / 10 min (docs/03 §2.3)
 
 [auth.external.google]
 enabled = true
+# NOTE 2026-10-05: `env(...)` substitution matches the WHOLE value — the CLI's hook is
+# ^env\((.*)\)$ (supabase/cli pkg/config/decode_hooks.go). The previous
+# `redirect_uri = "env(NEXT_PUBLIC_APP_URL)/auth/callback"` therefore never resolved and
+# was sent as that literal string. A composed value must be a single env var.
 client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"
 secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"
-redirect_uri = "env(NEXT_PUBLIC_APP_URL)/auth/callback"
+redirect_uri = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_REDIRECT_URI)"
 
 [storage]
 enabled = true
