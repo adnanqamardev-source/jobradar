@@ -1622,3 +1622,105 @@ reader. It now calls `dispatch`, and its remaining compare-and-swap claim is doc
 open item rather than as a spec.
 
 Gates: `typecheck exit=0` · `lint exit=0` · `764 passed | 19 skipped` (+38).
+
+---
+
+## 2026-10-09 — Docs audit: 05a and 05b were unreliable in both directions
+
+Audited `docs/05a-phase0.md` and `docs/05b-phase1.md` against the tree. `05b` was 59/169 ticked.
+The finding was not that the boxes were incomplete — it is that **both files were wrong in
+opposite directions**, and the 2026-10-09 connectors work I had just finished sat on the wrong
+side of it.
+
+### Falsely marked incomplete — work was already done
+
+| Ticket | Claimed | Actual |
+|---|---|---|
+| ENG-001 | ❌ "no `layout.tsx` or `page.tsx` exists, so `/` renders the built-in 404" | both exist |
+| ENG-001 | "`eslint-config-next` is **not installed**" | `package.json:55`, `^16.3.8` |
+| ENG-001 | "Tailwind is **inert** — `@tailwindcss/postcss` and `postcss.config.mjs` are missing" | `package.json:48` + `postcss.config.mjs` + `tailwind.config.ts` all present |
+| ENG-001 | "`docs/02` §4 wrongly required a `tailwind.config.ts` that Tailwind 4 ignores" | it exists and is wired |
+| ONB-010 | "⚠️ **blocked on AUT-003 / BE-302** — they throw rather than use the service role" | `bootstrap-from-resume.ts:89` calls `requireUser()` |
+| ING-001..005 | **30 boxes, 0 ticked** | 8 connectors, 8 fixtures, 153 tests passing |
+
+ENG-001 was the worst of these: five separate ❌/missing claims on the **Phase 0 gate ticket**,
+all written 2026-10-03, none re-checked, and `docs/06` §3 already recorded FND-001 as
+completed the same day. The two files contradicted each other and `05a` was the stale side.
+
+### Falsely marked complete — two real gaps found
+
+**ING-002: no connector paginates.** Searching all of `src/lib/connectors/` for `while (`,
+`for await`, `nextPage`, `hasMore` or a cursor returns **nothing**. A Greenhouse board larger
+than one page is silently truncated. This is a genuine ingestion defect, not a doc oversight,
+and it is now the one unticked box in ING-002 with the reason stated.
+
+**ING-005: no daily Firecrawl cap.** No `maxCalls`/`dailyCap`/`quota` in `firecrawl.ts`, though
+`docs/04` §5.1 specifies a hard per-plan cap. It bills rather than corrupts, and
+`.env.local` has `FIRECRAWL_API_KEY` empty — which is the only reason it has not cost anything
+yet. Also now stated.
+
+Neither was visible from reading the docs, because `docs/06` marked BE-102 and BE-105 **DONE**
+and both carried detailed, confident prose about their behaviour.
+
+### ENG-004 is the largest unverified gap in Phase 0
+
+RLS is enabled and forced on all 19 tables — verified in the DDL. But **no test in the repo
+proves any policy blocks anything.** All seven behavioural boxes are unticked, correctly.
+`migration-drift.test.ts` asserts SQL *text* (`alter table resumes enable row level security`,
+every policy carrying `(select auth.uid())`), which shows a policy was written, not that it
+fires.
+
+`docs/06` §3 says FND-003 was "Verified with `pg_policies`". Read strictly that is true and
+misleading in the same way: `pg_policies` is a catalogue query.
+
+This is the security boundary between one user's `job_scores` and another's, and the fixtures
+are nearly free — `profile-mutations.db.test.ts` already has a `seedUser()` helper creating two
+real auth users with real JWTs, which is the hard part. **Recommend it as the next Phase 0
+ticket, ahead of remaining Phase 1 work.**
+
+### The skills vocabulary is 10 rows, not ~600
+
+Unrecorded anywhere. `supabase/seed.sql` has exactly 10 skills. `jobs.skills` is populated by
+the BE-106 matcher against exactly this list, and both `jobs.skills` and `job_skills` FK the
+canonical `skills` table — so skill scoring can only recognise ten technologies, against a
+35-point component that is the heaviest weight in the scorer.
+
+`ingest-skills.test.ts` guards this *correctly*: it parses the seed file and fails if matcher
+and database disagree either way. It is a faithful guard over a 10-row vocabulary, which is
+precisely why the gap stayed invisible. Now recorded under ENG-003 as a decision needed.
+
+### Three different error-code counts
+
+`codes.ts` has **18**. The `docs/03` §5.1 table had **17** rows. `docs/06` §3 claimed **22**.
+The difference was `edit_conflict` — live on a real 409 path since 2026-10-06 with the
+`profiles.updated_at` guard, and never written into §5.1. Added the row; §5.1 and the code now
+agree at 18, and `docs/06`'s "22" is corrected.
+
+### ENG-006: 18 specs is 6 tests
+
+`tests/e2e/` holds one file, `smoke.spec.ts`, with 6 `test()` blocks. The config behaviour
+described (honours `PLAYWRIGHT_TEST_BASE_URL`, omits `webServer` for external targets) is
+accurate; the count was not. Corrected. The 7-job claim holds — `lint`, `typecheck`, `test`,
+`build`, `secret-scan`, `e2e`, `audit`.
+
+Required status checks remain unverifiable: `gh api …/required_status_checks` returns HTTP 403
+(private repo, free plan), so the box stays unticked with that reason recorded rather than
+assumed either way.
+
+### The backoff conflict is 3-to-1, not 2-to-1
+
+I previously reported it as `docs/02b` §6.4 (`2^n`) versus `docs/05b` ING-008 (30s/2m/8m). It
+is worse: **`docs/03` §5.2** and **`docs/04` §5.9** both state 30s/2m/8m as well. Three
+documents against one, and the implemented behaviour (`plan.ts`, `2^n`) is the minority
+position. For metered APIs a retry is a billed call, so 30s is the more defensible number.
+Annotated in `docs/03` §5.2 and still unresolved.
+
+### Also corrected
+
+ENG-005's redaction box: `redact()` exists and four test files import `logger`, but **none
+asserts redaction**. Given that a leaked log line is the exact failure `notes.md` records
+twice, that is the one box in ENG-005 that should have a test and does not.
+
+Gates: `typecheck exit=0` · `lint exit=0` · `764 passed | 19 skipped`. Docs only — no code
+changed. Encoding verified: 0 U+FFFD in all four files (`docs/06` retains its 30 pre-existing
+ones, confirmed against HEAD's blob bytes).

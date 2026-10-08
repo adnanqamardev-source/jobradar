@@ -14,9 +14,9 @@
 Initialise the Next.js (App Router) + TypeScript + Tailwind project with the folder structure in [02 §4](./02-technical-architecture.md). Enable `strict` TS, ESLint with `eslint-config-next`, Prettier, and path alias `@/* → src/*`. Add `vitest` and `playwright` configs. Commit `.env.example` listing every variable from [02 §7.1](./02-technical-architecture.md) with empty values and a comment each.
 
 **Done when:**
-- [ ] `pnpm dev` boots at `localhost:3000` with a placeholder page — ❌ **2026-10-03: no `layout.tsx` or `page.tsx` exists, so `/` renders the built-in 404.**
+- [x] `pnpm dev` boots at `localhost:3000` with a placeholder page — ✅ **2026-10-09 re-verified.** `src/app/layout.tsx` and `src/app/(marketing)/page.tsx` both exist and `/` renders. The ❌ recorded on 2026-10-03 was true that day and was never updated; see the correction note below.
 - [x] `pnpm lint`, `pnpm typecheck`, `pnpm test` all pass on an empty suite — ✅ verified 2026-10-03.
-- [ ] Folder tree matches [02 §4](./02-technical-architecture.md) exactly (including empty dirs with `.gitkeep`) — ⚠️ **the tree in `docs/02` §4 was itself wrong and has now been corrected. Re-check against the fixed version.**
+- [ ] Folder tree matches [02 §4](./02-technical-architecture.md) exactly (including empty dirs with `.gitkeep`) — ⚠️ **never checked against the corrected tree.** The `docs/02` §4 tree was itself wrong and has since been fixed; this box is still an open claim, not a verified one.
 - [ ] `.env.example` contains every variable from [02 §7.1](./02-technical-architecture.md), none with real values — ✅ 28 variables, all blank (verified 2026-10-03).
 - [x] `.gitignore` excludes `.env.local`; `gitleaks` pre-commit hook installed — ✅ **2026-10-03.** The hook is wired via `.simple-git-hooks.json` and runs `gitleaks git --staged`. The real binary (8.30.1, checksum-verified) lives in gitignored `tools/`. Project rules in `.gitleaks.toml` add the Supabase key formats the built-in ruleset misses. Details in [02](./02-technical-architecture.md) §4.2.
 - [x] ESLint rule blocks imports of `src/lib/db/admin.ts` outside `lib/queue/**`, `api/cron/**`, `api/webhooks/**` — ✅ **2026-10-03.** This was pointing the wrong way before: the rule blocked direct `@supabase/supabase-js` imports and let `admin.ts` through from anywhere. `tests/unit/eslint-guard.test.ts` pins both directions — 5 blocked paths must error, 5 sanctioned paths must stay open. Verified end-to-end with `pnpm lint`.
@@ -25,12 +25,21 @@ Initialise the Next.js (App Router) + TypeScript + Tailwind project with the fol
 `scripts/**` and `tests/**`. Neither is reachable from the client bundle, and excluding them
 would break `scripts/queue-drain.ts` and the RLS integration tests.
 
-**Also required by the ticket body, but missing from the boxes above:**
-- `eslint-config-next` is **not installed** (absent from `package.json`), though the first
-  sentence of this ticket requires it.
-- Tailwind is **inert**: `tailwindcss@4.3.3` is installed, but `@tailwindcss/postcss` and
-  `postcss.config.mjs` are missing, and `docs/02` §4 wrongly required a `tailwind.config.ts`
-  that Tailwind 4 ignores. See [02](./02-technical-architecture.md) §4.1.
+**CORRECTION 2026-10-09 — the three claims below were all false and are now corrected.**
+An audit against the tree found every one of them to be the opposite of reality. They had
+been written on 2026-10-03, were never re-checked, and sat on the Phase 0 gate ticket where a
+reader would take them as current:
+
+| Claimed missing | Actual |
+|---|---|
+| `layout.tsx` / `page.tsx` do not exist | both exist; `/` renders |
+| `eslint-config-next` absent from `package.json` | `package.json:55` — `"eslint-config-next": "^16.3.8"` |
+| `@tailwindcss/postcss` and `postcss.config.mjs` missing, so Tailwind is inert | `package.json:48` has `"@tailwindcss/postcss": "^4.3.3"`; `postcss.config.mjs` exists; `tailwind.config.ts` exists and is wired |
+
+`docs/06` §3 already recorded FND-001 as completed on 2026-10-03, so the two files
+contradicted each other and this one was the stale side. The lesson is the `notes.md` rule
+about a gate that was never executed: a claim written once and never revisited is a guess with
+a date on it.
 
 ---
 
@@ -55,13 +64,33 @@ Create `src/styles/tokens.css` with **every** colour, type, spacing, motion, and
 Stand up the Supabase project and write migration `0001_init.sql` implementing **every** enum, table, index, view, and function from [02 §5](./02-technical-architecture.md). Enable `pgvector` and `pg_cron`. Seed `skills` (~600 rows with aliases) and the default `sources` rows. Write `seed.sql` for local dev.
 
 **Done when:**
-- [ ] All tables from [02 §5.3–5.8](./02-technical-architecture.md) exist with correct columns, types, FKs, and cascades
-- [ ] `jobs.dedupe_hash` is `unique`; HNSW indexes exist on `jobs.embedding` and `profiles.profile_embedding`
-- [ ] Partial index on `task_queue(status, run_after, priority) where status='pending'`
-- [ ] Full-text GIN index on `jobs` title+description; trigram on `title_norm`/`company_domain`
-- [ ] `v_ranked_jobs` view and `move_application()` function work as specified
-- [ ] `supabase db reset` on a clean machine yields a working schema + seed
-- [ ] All migrations are idempotent / forward-only (no hand edits to applied migrations)
+- [x] All tables from [02 §5.3–5.8](./02-technical-architecture.md) exist with correct columns, types, FKs, and cascades — ✅ **2026-10-09 verified in the DDL**: 19 `create table` (excluding the `auth.users` stub), 13 enums, plus `v_ranked_jobs` and 4 functions. **Not** verified by `supabase db reset` — see the box below.
+- [x] `jobs.dedupe_hash` is `unique`; HNSW indexes exist on `jobs.embedding` and `profiles.profile_embedding` — ✅ `dedupe_hash text not null unique`; both HNSW indexes present as **half-precision** (`halfvec(2048) halfvec_cosine_ops`), because 2048-dim exceeds pgvector's 2000 limit for `hnsw`.
+- [x] Partial index on `task_queue(status, run_after, priority) where status='pending'` — ✅ `idx_task_queue_pending`.
+- [x] Full-text GIN index on `jobs` title+description; trigram on `title_norm`/`company_domain` — ✅ `to_tsvector('english', …)` GIN plus `idx_jobs_title_norm_trgm` / `idx_jobs_company_domain_trgm`.
+- [x] `v_ranked_jobs` view and `move_application()` function work as specified — ✅ both present; `v_ranked_jobs` carries `security_invoker = true` (asserted in `migration-drift.test.ts`, without which the view would silently bypass RLS) and exposes the `final_score`/`breakdown`/`explanation`/`scored_at` columns.
+- [ ] `supabase db reset` on a clean machine yields a working schema + seed — ❌ **never executed.** Docker Desktop is not installed on this machine, so no local Postgres. Every ✅ above is DDL inspection, which is exactly the "schema-green is not integration-green" case in `notes.md`.
+- [x] All migrations are idempotent / forward-only (no hand edits to applied migrations) — ✅ 9 migrations, `0001`–`0009`, additive and never edited after application.
+
+### ⚠️ Unrecorded gap: the skills vocabulary is 10 rows, not ~600
+
+The ticket body asks for ~600 seeded skills. `supabase/seed.sql` contains **10**:
+TypeScript · React · Next.js · PostgreSQL · Tailwind CSS · Python · AWS · Docker · Kubernetes ·
+GraphQL. Nothing in `docs/05a`, `docs/05b` or `docs/06` records the shortfall.
+
+This is load-bearing, not cosmetic. `jobs.skills` is populated by the BE-106 matcher against
+exactly this vocabulary, and `jobs.skills` / `job_skills` both FK the canonical `skills` table —
+so skill scoring today can only ever recognise ten technologies. A posting for a Kubernetes
+engineer using Go, Terraform or AWS Lambda scores zero on the 35-point skills component, which
+is the heaviest weight in the scorer.
+
+`tests/unit/ingest-skills.test.ts` guards this *correctly*: it parses `supabase/seed.sql` and
+fails if the matcher and the database disagree in either direction. It is therefore a faithful
+guard over a 10-row vocabulary, not a broken one — which is why the gap has stayed invisible.
+
+**Needs a decision:** is ~600 aspirational (and the ticket should say 10 is the MVP floor), or is
+the corpus genuinely 60× smaller than specified? Nothing else in Phase 1 depends on the answer,
+but `SCR-002`'s skills sub-score does.
 
 ---
 
@@ -71,13 +100,32 @@ Stand up the Supabase project and write migration `0001_init.sql` implementing *
 Implement the policy table from [03 §4.2](./03-security-and-access.md): RLS **enabled** on every table with default deny, plus `is_admin()` helper. Write integration tests that prove each policy.
 
 **Done when:**
-- [ ] `select * from pg_tables` shows RLS enabled for every app table
-- [ ] Test: user A cannot `select`/`update`/`delete` user B's `profiles`, `job_scores`, `applications`, `saved_searches`, `resume_versions`, `digests`
-- [ ] Test: authenticated user can `select` `jobs`/`skills`/`companies`/`sources` but `insert` fails
-- [ ] Test: `task_queue`, `scrape_runs`, `audit_logs` return nothing for a normal authenticated role
-- [ ] Test: `subscriptions.plan` `update` as a normal user **fails**
-- [ ] Test: `job_scores` `insert` as a normal user **fails** (scorer is service-role only)
-- [ ] Test: admin can `select` `scrape_runs` and `sources`, but **cannot** `select` another user's `applications`
+- [x] `select * from pg_tables` shows RLS enabled for every app table — ✅ **2026-10-09 verified in the DDL**: 19 `create table`, 19 `alter table … enable row level security`, 19 `… force row level security`. `is_admin()` exists as a SECURITY DEFINER function. **DDL inspection, not a live query** — see the caveat below.
+- [ ] Test: user A cannot `select`/`update`/`delete` user B's `profiles`, `job_scores`, `applications`, `saved_searches`, `resume_versions`, `digests` — ❌ **no such test exists.**
+- [ ] Test: authenticated user can `select` `jobs`/`skills`/`companies`/`sources` but `insert` fails — ❌ **no such test exists.** The policies that would make it true are in the DDL (`jobs_owner_read` style, corpus read-only), but nothing asserts it.
+- [ ] Test: `task_queue`, `scrape_runs`, `audit_logs` return nothing for a normal authenticated role — ❌ **no such test exists.** `scrape_runs_admin_read` and `audit_logs_admin_read` are the only policies on those two tables, which is the *shape* docs/03 §4.2 requires (no authenticated policy = default deny) — but that is an inference from reading SQL, not an observation.
+- [ ] Test: `subscriptions.plan` `update` as a normal user **fails** — ❌ **no such test exists.**
+- [ ] Test: `job_scores` `insert` as a normal user **fails** (scorer is service-role only) — ❌ **no such test exists.** `job_scores_owner_select` is the sole policy, so there is no INSERT path for a user — which is why `persistScore` must use the service role (`docs/05b` SCR-004). Again: inferred, not observed.
+- [ ] Test: admin can `select` `scrape_runs` and `sources`, but **cannot** `select` another user's `applications` — ❌ **no such test exists.**
+
+### ⚠️ ENG-004 is the largest unverified gap in Phase 0
+
+Every behavioural box is unticked, and that is correct — **there is no test in the repo that
+proves any RLS policy blocks anything.** `tests/integration/` contains two files
+(`profile-mutations.db.test.ts`, `dedupe.db.test.ts`), both of which skip without a local
+Postgres, and neither of which tests cross-user access denial. `migration-drift.test.ts`
+asserts the *SQL text* (`alter table resumes enable row level security`, every policy carries
+`(select auth.uid())`), which proves the policies were written and not that they fire.
+
+`docs/06` §3 records FND-003 as "Verified with `pg_policies`". Read strictly that is true and
+misleading in the same way: `pg_policies` is a catalogue query. It shows a policy exists; it
+cannot show it denies anything.
+
+This matters more than a normal open ticket because RLS is the only thing standing between one
+user's `job_scores` and another's. The behaviours above are individually simple and the fixtures
+are nearly free — `profile-mutations.db.test.ts` already has a `seedUser()` helper that creates
+two real auth users with real JWTs, which is the hard part. **Recommend this as the next Phase 0
+ticket, ahead of the remaining Phase 1 work.**
 
 ---
 
@@ -87,12 +135,12 @@ Implement the policy table from [03 §4.2](./03-security-and-access.md): RLS **e
 Create `lib/logger.ts` (JSON with `requestId`/`runId`, `redact()` on `*_KEY`, `*_SECRET`, `authorization`, `cookie`) and `lib/errors/` with `AppError` + the code→copy map from [03 §5.1](./03-security-and-access.md). Wire Sentry with `sendDefaultPii: false`. Build the 404, 500, and error boundary pages showing a copyable `requestId` and **never** a stack trace.
 
 **Done when:**
-- [ ] Every code in [03 §5.1](./03-security-and-access.md) exists with its exact user-facing copy
-- [ ] Test: a logger call containing a fake `OPENROUTER_API_KEY` outputs `***`
-- [ ] 500 page shows friendly copy + `requestId`, no stack trace, no env values
-- [ ] 404 for a not-yours resource is byte-identical to a genuinely missing resource
-- [ ] Sentry receives the error with `{code, requestId, userId}` and `sendDefaultPii:false`
-- [ ] Every error response carries the correct status (401/403/404/422/429/500)
+- [ ] Every code in [03 §5.1](./03-security-and-access.md) exists with its exact user-facing copy — ⚠️ **three different counts, none reconciled.** `src/lib/errors/codes.ts` defines **18**; the `docs/03` §5.1 table has **17 rows** (it folds `file_too_large` / `file_type_invalid` into one); and `docs/06` §3 claims **22**. The one code in `codes.ts` that §5.1 does not document is **`edit_conflict`** — added 2026-10-06 for the `profiles.updated_at` optimistic-concurrency guard ([03 §5.2](./03-security-and-access.md)). It is a real code on a real 409 path and simply was never written into §5.1. Needs a doc row, then the counts reconcile.
+- [ ] Test: a logger call containing a fake `OPENROUTER_API_KEY` outputs `***` — ❌ **no such test.** `redact()` and `redactObject()` exist in `lib/logger.ts`; four test files import `logger` but only to silence it, and none asserts redaction. This is the one box here that should have a test and does not, given that a leak in a log line is the exact failure `notes.md` records twice.
+- [ ] 500 page shows friendly copy + `requestId`, no stack trace, no env values — ⚠️ `src/app/error.tsx` and `not-found.tsx` exist and are the documented shape per `docs/06` §3, but **not asserted by a test**.
+- [ ] 404 for a not-yours resource is byte-identical to a genuinely missing resource — ⚠️ the `not_found` code's copy is written to be existence-free ("We couldn't find that."), and `AppError` maps it to 404. **Not asserted**, and the one route that would prove it (`/jobs/[id]` for someone else's job) is still a `.gitkeep` — Phase 2.
+- [ ] Sentry receives the error with `{code, requestId, userId}` and `sendDefaultPii:false` — ⚠️ `lib/sentry.ts` sets 20% trace sampling, `sendDefaultPii: false`, and a `beforeSend` hook attaching `error_code`/`request_id`/`user_id`. **Not asserted**, and unverifiable here: no DSN is configured (`.env.local` has `SENTRY_DSN` empty), so nothing has ever been delivered.
+- [ ] Every error response carries the correct status (401/403/404/422/429/500) — ⚠️ each entry in `codes.ts` carries an `httpStatus`, and the 429 in `rate_limited` is 429 as documented. **Not asserted by a test.**
 
 ---
 
@@ -115,8 +163,8 @@ Three details that are load-bearing and were each learned the hard way:
 **Done when:**
 - [x] CI fails on lint error, type error, failing test, or high/critical CVE — verified; all 7 jobs green on `main`
 - [x] Bundle scan fails on a credential **value** in client output — `scripts/scan-bundle-secrets.ts`, proven by planting an `sb_secret_` value (fails) and by minified noise (passes)
-- [x] Playwright runs against the preview deployment, not just localhost — `playwright.config.ts` honours `PLAYWRIGHT_TEST_BASE_URL` and omits `webServer` for external targets; 18 specs pass against the live deployment
-- [ ] Required status checks block merging to `main` — repo setting, not code. Enable the 7 job names as required checks in GitHub settings.
+- [x] Playwright runs against the preview deployment, not just localhost — `playwright.config.ts` honours `PLAYWRIGHT_TEST_BASE_URL` and omits `webServer` for external targets. ⚠️ **count corrected 2026-10-09: there are 6 tests, not 18** — `tests/e2e/` contains one file, `smoke.spec.ts`, with 6 `test()` blocks (marketing page, mobile width, login field, not-found, CTA navigation, client-bundle hygiene). The config behaviour is as described; the spec count in the original claim was not.
+- [ ] Required status checks block merging to `main` — repo setting, not code. Enable the 7 job names (`lint`, `typecheck`, `test`, `build`, `secret-scan`, `e2e`, `audit`) as required checks in GitHub settings. **Still unverified 2026-10-09** — `gh api …/branches/main/protection/required_status_checks` returns HTTP 403 ("Upgrade to GitHub Pro or make this repository public"), so this cannot be confirmed or denied from here.
 - [x] The workflow file itself is valid — `tests/unit/workflow-yaml.test.ts` rejects duplicate keys, the required job set, and the `needs` ordering. Added after a duplicate key made GitHub reject the file in 0s with no logs while `yaml.safe_load` passed it.
 
 ---

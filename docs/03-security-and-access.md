@@ -400,8 +400,19 @@ Principles: **say what happened, say what to do, never leak internals.** Every f
 | `webhook_invalid` | Stripe signature mismatch | â€” | 400, logged, alerted |
 | `service_unavailable` | DB unreachable / 5xx burst | Full-page: *"Something's on our end. We're looking into it."* + `requestId` | 503, Sentry alert |
 | `internal_error` | Unhandled exception | Full-page: *"Something went wrong. Try again."* + `requestId` (never a stack trace) | 500, Sentry capture with `requestId` |
-| `file_too_large` / `file_type_invalid` | RÃ©sumÃ© upload | Under the field: *"PDFs under 5 MB."* | Rejected before upload |
+| `file_too_large` / `file_type_invalid` | Résumé upload | Under the field: *"PDFs under 5 MB."* | Rejected before upload |
+| `edit_conflict` | A save is based on a stale `updated_at` (two tabs, or an edit during a slow request) | *"Someone else changed this while you were editing. Reload and try again."* | 409, **nothing written**; the losing write is refused rather than silently clobbering. Added 2026-10-06 with the `profiles.updated_at` optimistic-concurrency guard ([05b](./05b-phase1.md) ONB-006). It was missing from this table while already live in `src/lib/errors/codes.ts` — recorded 2026-10-09. |
 | `account_locked` | Repeated auth failures | Generic: *"Too many attempts. Wait 15 minutes and try again."* | Cooldown, no account-existence hint |
+
+**Reconciled 2026-10-09.** An audit found three different counts for this table:
+`src/lib/errors/codes.ts` defines **18** codes, this table had **17** rows, and `docs/06` §3
+claimed **22**. The discrepancy was `edit_conflict` — live in `codes.ts` on a real 409 path
+since 2026-10-06 but never written here. With the row above, the table and the code now agree at
+**18**, and `docs/06` §3's "22" is corrected.
+
+Every code in `codes.ts` carries an `httpStatus`, and the statuses match the "System does"
+column above (422/401/403/404/429/402/500/503/409). Not asserted by a test — see
+[05a ENG-005](./05a-phase0.md).
 
 ### 5.2 Failure-point playbook
 
@@ -410,7 +421,7 @@ Principles: **say what happened, say what to do, never leak internals.** Every f
 
 | Failure point | Response |
 |---|---|
-| **API doesn't respond** | Connector timeout at 30s â†’ task retries 3Ã— at 30s/2m/8m â†’ then `failed`. Feed keeps serving the last good corpus; **the app never blocks on a source**. Admin sees the source flagged amber at 3 failures, paused at 5. |
+| **API doesn't respond** | Connector timeout at 30s â†’ task retries 3Ã— at 30s/2m/8m â†’ then `failed`. Feed keeps serving the last good corpus; **the app never blocks on a source**. Admin sees the source flagged amber at 3 failures, paused at 5. ⚠️ **2026-10-09: the implemented backoff is `2^n` (2s, 4s, 8s), not 30s/2m/8m.** docs/04 §5.9 and docs/05b ING-008 state 30s/2m/8m; docs/02b §6.4 says `2^n` and src/lib/queue/plan.ts follows it — three documents against one. Unresolved; see [02b §6.4a](./02b-subsystems.md). |
 | **Wrong password** | N/A â€” no passwords. Wrong OTP/code â†’ *"That code didn't match. Try again."* (5 attempts, then `account_locked`). |
 | **Magic link expired / reused** | *"This link has expired. Request a new one."* + one-click resend. Not an error page â€” a normal login state. |
 | **Payment fails** | Entitlements **unchanged** (never downgrade on a failed charge). `past_due` â†’ banner with update-card link. Grace 7 days â†’ `canceled` â†’ `plan='free'`. One dunning email at day 1, 3, 7. |

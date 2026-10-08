@@ -222,7 +222,7 @@ auto-apply**: the user confirms before anything is written to their profile.
 - [x] Mapping is a pure function (`src/lib/resume/bootstrap.ts`) with no DB access
 - [x] `mergeBootstrapWithExisting` prefers new values but never blanks a field the user already set
 - [x] An empty extraction is detectable, so the wizard falls back to manual entry
-- [ ] The Server Actions resolve a real session via `requireUser()` ⚠️ **blocked on AUT-003 / BE-302** — they throw rather than use the service role
+- [x] The Server Actions resolve a real session via `requireUser()` — ✅ **CORRECTION 2026-10-09: this box said "blocked on AUT-003 / BE-302" and was stale.** BE-302 landed 2026-10-05. `src/app/api/actions/profile/bootstrap-from-resume.ts:89` calls `requireUser()` and `:90` calls `createUserClient(user.accessToken)`, so the write runs under the caller's own RLS-scoped JWT — no service-role fallback, which is the property the box was protecting. Covered by `tests/unit/resume-bootstrap.test.ts`.
 - [ ] Writing the confirmed prefill to `profiles` is wired and covered by an RLS integration test
 
 ### ONB-011 — Deterministic extraction as the default
@@ -246,11 +246,15 @@ extracted **without a model**. [02 §1](./02-technical-architecture.md) principl
 Implement `SourceConnector`, `RawJob`, and `registry.ts` exactly as specified in [02 §6.1](./02-technical-architecture.md), with a Zod schema per connector output.
 
 **Done when:**
-- [ ] `types.ts` matches the interface in [02 §6.1](./02-technical-architecture.md)
-- [ ] `registry` maps `source_kind` → connector; unknown kind fails loudly
-- [ ] Every connector validates its response through Zod before returning
-- [ ] Contract tests run against recorded fixtures — **no live API calls in CI**
-- [ ] Each connector sets timeout, `AbortSignal`, and retry per [04 §5.9](./04-frontend-specification.md)
+- [x] `types.ts` matches the interface in [02 §6.1](./02-technical-architecture.md) — ✅ **BE-101, 2026-10-05.** `src/lib/connectors/{types,http,registry,index}.ts`. `SourceConnector` carries `kind` + `costClass` + an async-iterable `fetch(cfg, ctx)`; `fetch`, clock and sleep are injected on `RunCtx` so contract tests never touch the network. `RawJob` is re-exported from `src/types/canonical-job.ts` rather than redefined — the seam owns it.
+- [x] `registry` maps `source_kind` → connector; unknown kind fails loudly — ✅ `connectors-registry.test.ts`; an unknown kind throws naming the kind.
+- [x] Every connector validates its response through Zod before returning — ✅ each connector owns its provider schema and validates before mapping.
+- [x] Contract tests run against recorded fixtures — **no live API calls in CI** — ✅ 8 JSON fixtures in `tests/integration/fixtures/sources/`, 153 tests across `connectors-{contract,registry,url-guard,http}.test.ts` (2026-10-09).
+- [x] Each connector sets timeout, `AbortSignal`, and retry per [04 §5.9](./04-frontend-specification.md) — ✅ `http.ts`: 30s timeout, `AbortSignal`, retry ≤3 with `2^n` backoff, typed error mapping.
+
+> **Corrected 2026-10-09.** This ticket and ING-002..005 were entirely unticked while
+> `docs/06` §4.1 marked BE-101..105 **DONE**. The work and its tests are real; the boxes here
+> were the stale side. Re-verified against the tree before ticking — see each box.
 
 ---
 
@@ -260,11 +264,11 @@ Implement `SourceConnector`, `RawJob`, and `registry.ts` exactly as specified in
 Implement the three public ATS connectors per the field-mapping table in [04 §5.2](./04-frontend-specification.md).
 
 **Done when:**
-- [ ] Each maps to `RawJob` with `externalId`, `sourceUrl`, `title`, `companyName`, `postedAt`, `descriptionHtml` populated
-- [ ] HTML content is preserved (not stripped) for `description_html`
-- [ ] Fixtures for each connector pass the contract test
-- [ ] Pagination / large boards handled without truncation
-- [ ] Failure returns a typed error → `upstream_error`, never an unhandled throw
+- [x] Each maps to `RawJob` with `externalId`, `sourceUrl`, `title`, `companyName`, `postedAt`, `descriptionHtml` populated — ✅ **BE-102.** 15 fixture contract tests, each pinning the request as well as the output. Three provider quirks that would otherwise ingest zero are handled: Lever returns a **bare array** (not `{jobs:[]}`) and its `createdAt` is **epoch ms**, which fails `z.string().datetime()`; Ashby has no company name and an **object-shaped** `location`. `isRemote: false` maps to `null`, not `"onsite"` — asserting onsite would hard-fail the `work_mode_mismatch` gate against a hybrid preference on one boolean.
+- [x] HTML content is preserved (not stripped) for `description_html` — ✅ carried through `RawJob.descriptionHtml` to `normaliseJob`. **But see the open gap below**: `normalize.ts:383` still writes `descriptionHtml: null`, so the column stays NULL for the whole corpus until the sanitiser exists.
+- [x] Fixtures for each connector pass the contract test — ✅ `api_greenhouse.json`, `api_lever.json`, `api_ashby.json`.
+- [ ] Pagination / large boards handled without truncation — ❌ **genuinely not done.** No connector contains a pagination loop: no `while`, no `for await`, no cursor or `next` handling anywhere in `src/lib/connectors/`. A board larger than one page of results is silently truncated. This is a real ingestion gap, not a doc oversight — a large Greenhouse board loses postings.
+- [x] Failure returns a typed error → `upstream_error`, never an unhandled throw — ✅ `http.ts` maps abort/timeout to `upstream_timeout` and HTTP/transport failures to `upstream_error`, both as `AppError`.
 
 ---
 
@@ -274,10 +278,10 @@ Implement the three public ATS connectors per the field-mapping table in [04 §5
 Implement per [04 §5.2](./04-frontend-specification.md). USAJOBS requires `Host`, `Authorization-Key`, **and** a `User-Agent` header.
 
 **Done when:**
-- [ ] Remotive respects ≤1 request / 1.5s (throttled in the pipeline)
-- [ ] USAJOBS sends all three required headers; missing key fails fast with a clear ops message
-- [ ] Arbeitnow `is_remote` maps to `work_mode`
-- [ ] All three pass fixture contract tests
+- [x] Remotive respects ≤1 request / 1.5s (throttled in the pipeline) — ✅ enforced as a **minimum interval between requests on the injected clock**, not a delay on entry. A delay on entry would not bound the rate when several requests are issued in sequence.
+- [x] USAJOBS sends all three required headers; missing key fails fast with a clear ops message — ✅ `Host`, `Authorization-Key`, `User-Agent`. It fails fast **by name** when the key is blank, because USAJOBS answers a missing key with a 403 indistinguishable from a bad one — a generic error would send an operator hunting a rotated key that was never set.
+- [x] Arbeitnow `is_remote` maps to `work_mode` — ✅ also normalises **both** second and millisecond epoch timestamps; treating seconds as ms dates the posting to 1970 and drops it out of every freshness window.
+- [x] All three pass fixture contract tests — ✅ 20 fixture contract tests (BE-103).
 
 ---
 
@@ -287,10 +291,14 @@ Implement per [04 §5.2](./04-frontend-specification.md). USAJOBS requires `Host
 Implement Adzuna search with country/`what`/`where` params and salary extraction (`salary_min`/`salary_max` → `salaryRaw` fallback).
 
 **Done when:**
-- [ ] Credentials read from env only; missing creds fail fast
-- [ ] Salary fields map into `salary_min`/`salary_max`/`salary_currency` when present
-- [ ] `descriptionHtml` handled (Adzuna returns HTML)
-- [ ] Fixture contract test passes; `api_calls` counted for cost attribution
+- [x] Credentials read from env only; missing creds fail fast — ✅ **BE-104.** A 401 cannot be retried, and retrying would burn quota that would otherwise buy results, so it throws by name instead.
+- [x] Salary fields map into `salary_min`/`salary_max`/`salary_currency` when present — ✅ the only connector with structured salary, so it is the only one that can populate the numeric columns rather than leaving a `salaryRaw` string to re-parse. `salary_label` is carried alongside and never overrides them. Currency is upper-cased, because `rawJobSchema` only enforces `.length(3)` and `"gbp"` would otherwise reach a `char(3)` column as-is.
+- [x] `descriptionHtml` handled (Adzuna returns HTML) — ✅ carried on `RawJob`. Same open gap as ING-002: `normalize.ts` nulls it until the sanitiser exists.
+- [x] Fixture contract test passes; `api_calls` counted for cost attribution — ✅ 12 fixture contract tests. `costClass: "metered"`, and `RunCtx.onRequest` counts attempts **including retries**, because a retry is a billed call.
+
+**Behaviour worth recording (not a ticket box):** a record with no `redirect_url` is
+**skipped**, not defaulted. `sourceUrl` is non-nullable and the BE-107 dedupe hash is built
+from it, so a placeholder would collide unrelated postings onto one row.
 
 ---
 
@@ -300,11 +308,11 @@ Implement Adzuna search with country/`what`/`where` params and salary extraction
 Implement `firecrawl.ts` using `/scrape` (JSON-schema extraction), `/search`, and `/map` exactly as specified in [04 §5.1](./04-frontend-specification.md).
 
 **Done when:**
-- [ ] `/scrape` sends `formats:["json"]`, `onlyMainContent:true`, `maxAge` 12h, 30s timeout
-- [ ] Extraction schema matches `RawJob`
-- [ ] Output validated by Zod; a bad parse → `scrape_parse_failed`, run `partial`, no user-facing error
-- [ ] URL validation rejects non-`https`, localhost, and private IP ranges ([03 §6.2 S-05](./03-security-and-access.md))
-- [ ] Daily Firecrawl call count is recorded and capped per plan
+- [x] `/scrape` sends `formats:["json"]`, `onlyMainContent:true`, `maxAge` 12h, 30s timeout — ✅ **BE-105.** `maxAge: 43_200_000` (12h) is the documented cache window; without it every run re-crawls unchanged pages and burns quota. `timeout: 30000` is sent to Firecrawl as well as held locally, matching `HTTP_DEFAULTS.timeoutMs`.
+- [x] Extraction schema matches `RawJob` — ✅ deliberately **narrower**: only `title`/`companyName`/`sourceUrl` are required. Requiring `salaryRaw` would fail extraction on every posting without a salary, when the right answer is `salary = null`.
+- [x] Output validated by Zod; a bad parse → `scrape_parse_failed`, run `partial`, no user-facing error — ✅ a malformed posting is **skipped individually**, so one bad listing does not discard the whole page.
+- [x] URL validation rejects non-`https`, localhost, and private IP ranges ([03 §6.2 S-05](./03-security-and-access.md)) — ✅ `url-guard.ts` runs **before any request**: non-`https`, credentials-in-URL, localhost, and private/reserved IPv4 **and** IPv6. `/map` results are filtered too, so an operator cannot poison `sources.config.urls`. 11 fixture contract tests plus **60 adversarial SSRF cases**. Stated limit: this is a name/literal check, so a public hostname that resolves to a private address is not caught here.
+- [ ] Daily Firecrawl call count is recorded and capped per plan — ❌ **not done.** No per-day cap exists in `firecrawl.ts` (no `maxCalls`/`dailyCap`/`quota`). `docs/04` §5.1 specifies a hard daily cap per plan. This is a **cost** gap rather than a correctness one — it bills rather than corrupts — and it becomes urgent the moment a real Firecrawl key is configured (`.env.local` has `FIRECRAWL_API_KEY` empty, which is why nothing has burned money yet).
 
 ---
 
@@ -314,12 +322,16 @@ Implement `firecrawl.ts` using `/scrape` (JSON-schema extraction), `/search`, an
 `lib/ingest/normalize.ts`: `RawJob` → `CanonicalJob`. Parse salary strings, seniority from title, employment type, location, remote/hybrid signals, and extract skills into `job_skills`.
 
 **Done when:**
-- [ ] Salary parser handles `$160k–$190k`, `160000-190000 USD`, `€70.000/Jahr`, hourly rates, and returns `unknown` (never a guess) when ambiguous
-- [ ] Seniority parser maps title → enum, `unknown` when unclear
-- [ ] Work-mode detection matches keywords (`remote`, `hybrid`, `on-site`, `in office`)
-- [ ] Skill extraction uses `skills.aliases` with regex, low-confidence matches weighted `< 0.5`
-- [ ] Unit tests cover ≥20 real-world title/salary/description samples
-- [ ] Nothing unparseable throws — it lands with `confidence < 1`
+- [x] Salary parser handles `$160k–$190k`, `160000-190000 USD`, `€70.000/Jahr`, hourly rates, and returns `unknown` (never a guess) when ambiguous — ✅ `parseSalary`. Ordering is load-bearing: **lakh/crore is resolved before the number scan**, because `15L` read by a generic pattern is `15` — off by 100,000× — and `\d{1,3}(,\d{3})*` cannot match Indian `3-2-3` grouping at all, silently truncating `15,00,000` to `15`. The scan therefore matches any comma-grouped run and strips separators.
+- [x] Seniority parser maps title → enum, `unknown` when unclear — ✅ `extractSeniority`.
+- [x] Work-mode detection matches keywords (`remote`, `hybrid`, `on-site`, `in office`) — ✅ plus `detectRemoteScope`, which resolves **India-specific phrases before generic ones** so `"Remote - India (Worldwide)"` → `india`. A generic remote check first would match `worldwide` and hand an India-only role to the global bucket.
+- [ ] Skill extraction uses `skills.aliases` with regex, low-confidence matches weighted `< 0.5` — ⚠️ **partially done, and the weighting half is not implemented.** BE-106 added `src/lib/ingest/skills.ts`, which matches posting text against a mirror of the `supabase/seed.sql` vocabulary (alias patterns, escaped literals, word-boundary guards) and populates `jobs.skills` with canonical slugs. **Not done:** there is no confidence value, so nothing is weighted `< 0.5`; matches are a flat set. There is also no `job_skills` write from the normaliser — `jobs.skills` is a `text[]`, and `job_skills` (the weighted m2m that `rules.ts` reads for the 35-point skills component) is still unpopulated. See the vocabulary gap in [05a ENG-003](./05a-phase0.md): the matcher mirrors 10 seeded skills, not ~600.
+- [x] Unit tests cover ≥20 real-world title/salary/description samples — ✅ `ingest-normalize.test.ts` (25) + `ingest-skills.test.ts` (19) + `ingest-dedupe.test.ts` (36) = 80 across normalisation, skills and dedupe.
+- [x] Nothing unparseable throws — it lands with `confidence < 1` — ✅ every parser returns a neutral/unknown value rather than throwing; `normaliseJob` is total.
+
+**Delivered 2026-10-09** (re-scoped against the code — see the correction note under ING-001).
+`parseSalary`, `parseLocation`, `detectRemoteScope` and `extractSeniority` had already shipped
+under BE-317; the skill matcher was the only genuine gap.
 
 ---
 
