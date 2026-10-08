@@ -34,6 +34,7 @@
  * digest timezones, and retry backoff all need a fake clock to be testable.
  */
 
+import { queueBackoffMs } from "@/lib/backoff";
 import { MAX_ATTEMPTS_DEFAULT, MAX_BATCH } from "./constants";
 
 /** The subset of a `task_queue` row this module needs. Matches docs/02 §5.8. */
@@ -143,34 +144,19 @@ function cmpRunAfter(a: QueueTask, b: QueueTask): number {
 /**
  * Retry delay in milliseconds, per attempt number.
  *
- * **Changed 2026-10-09 from `2^n` to the documented 30s / 2m / 8m.**
+ * Delegates to `queueBackoffMs` in `src/lib/backoff.ts`, which holds the ladder and the
+ * reasoning. That module exists because the repository had two functions both called "backoff"
+ * — this one and the connector's in `lib/connectors/http.ts` — which had drifted apart, and
+ * whose shared name hid that they serve different contexts.
  *
- * `docs/03` §5.2, `docs/04` §5.9 and `docs/05b` ING-008 all specify 30s / 2m / 8m; only
- * `docs/02b` §6.4's formula said `2^n`, and the code followed the minority. The tie is
- * broken toward the majority because a retry of a **metered** source is a billed call —
- * Adzuna and Firecrawl both price per request, and `RunCtx.onRequest` counts retries for
- * exactly that reason. Retrying a merely-slow upstream after 2s spends quota on failures
- * rather than on results.
- *
- * Attempt numbers map positionally, so the first failure (which leaves `attempts = 1`)
- * waits 30s. An attempt beyond the table is not extrapolated — `max_attempts` defaults to
- * 3, and an unbounded doubling would eventually produce a delay no scheduler can represent.
- * The last value repeats, which is deliberate: a task that has exhausted its attempts is
- * terminal anyway, and an ever-growing interval would only hide that.
+ * **Changed 2026-10-09 from `2^n` to the documented 30s / 2m / 8m.** `docs/03` §5.2,
+ * `docs/04` §5.9 and `docs/05b` ING-008 all specify the ladder; only `docs/02b` §6.4's formula
+ * said `2^n`, and the code had followed the minority. A retry of a **metered** source is a
+ * billed call, and the wait here happens while no lease is held — the row is `pending` between
+ * invocations — so a long ladder costs nothing but recovery latency.
  */
-const LAST_RUNG_MS = 480_000;
-const BACKOFF_LADDER_MS: readonly number[] = [30_000, 120_000, LAST_RUNG_MS];
-
 export function backoffFor(attempts: number): number {
-  const n = Math.trunc(attempts);
-
-  // `attempts` is 1-based (the first failure leaves attempts = 1) while the array is
-  // 0-based, so attempt 1 must read index 0. Both ends are clamped, and the fallback is the
-  // named last rung rather than a non-null assertion — `noUncheckedIndexedAccess` is right
-  // that an out-of-range index is `undefined`, and `?? LAST_RUNG_MS` is the honest way to
-  // say "cannot happen, and here is what we'd do if it did".
-  const index = Math.min(Math.max(n - 1, 0), BACKOFF_LADDER_MS.length - 1);
-  return BACKOFF_LADDER_MS[index] ?? LAST_RUNG_MS;
+  return queueBackoffMs(attempts);
 }
 
 /** How a task's execution ended. */

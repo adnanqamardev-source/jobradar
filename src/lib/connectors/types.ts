@@ -125,8 +125,11 @@ export interface SourceConnector {
 export const HTTP_DEFAULTS = {
   timeoutMs: 30_000,
   retries: 3,
-  /** Exponential: first retry waits 2^1 = 2s (docs/02b §6.4 uses the same convention). */
-  backoffBaseMs: 1_000,
+  // The retry *interval* used to live here as `backoffBaseMs: 1_000`, doubling per attempt.
+  // It moved to `src/lib/backoff.ts` on 2026-10-09 because two functions both called "backoff"
+  // and had drifted apart. It is deliberately NOT the queue's 30s/2m/8m ladder: this wait
+  // happens inside a leased task, and the queue's totals 630s against a 300s lease — a
+  // connector using it would be reaped mid-sleep and a second worker would run the same task.
 } as const;
 
 /**

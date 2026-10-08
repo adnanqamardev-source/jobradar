@@ -14,6 +14,7 @@
 import { AppError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
 
+import { connectorBackoffMs } from "@/lib/backoff";
 import { HTTP_DEFAULTS, JOB_API_TIMEOUT_MS, type RunCtx } from "./types";
 
 // The timeout policy is applied here, so it is offered from here too — a connector that
@@ -145,9 +146,16 @@ export async function fetchJson<T>(
   throw new AppError("upstream_error", { message: `${options.label}: failed` });
 }
 
-/** Wait `backoffBaseMs * 2^attempt` — the attempt number is post-incremented. */
+/**
+ * Wait before retrying, using the **connector** ladder.
+ *
+ * Deliberately not the queue's ladder. This wait happens *inside* a leased task, and the
+ * connector ladder is bounded by `LEASE_MS` — see `src/lib/backoff.ts` for the constraint and
+ * the table comparing the two contexts. The attempt number is post-incremented, so attempt 1
+ * reads the first rung.
+ */
 async function backoff(attempt: number, label: string, ctx: RunCtx): Promise<void> {
-  const waitMs = HTTP_DEFAULTS.backoffBaseMs * 2 ** attempt;
+  const waitMs = connectorBackoffMs(attempt);
   log.warn("retrying upstream call", { label, attempt, waitMs });
   await ctx.sleep(waitMs);
 }
