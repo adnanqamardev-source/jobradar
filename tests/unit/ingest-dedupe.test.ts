@@ -325,46 +325,60 @@ describe("pickSurvivor", () => {
 describe("upsertCanonicalJob", () => {
   function fakeWriter(result: { error: { message: string } | null }): {
     writer: JobWriter;
-    calls: { values: Record<string, unknown>; options: { onConflict: string } }[];
+    calls: { fn: string; pRow: Record<string, unknown> }[];
   } {
-    const calls: { values: Record<string, unknown>; options: { onConflict: string } }[] = [];
+    const calls: { fn: string; pRow: Record<string, unknown> }[] = [];
     const writer: JobWriter = {
-      from: () => ({
-        upsert: (values: unknown, options: { onConflict: string }) => {
-          const record = values;
-          if (record !== null && typeof record === "object") {
-            calls.push({ values: record as Record<string, unknown>, options });
-          }
-          return Promise.resolve({ data: null, error: result.error });
-        },
-      }),
+      rpc: (fn, args) => {
+        calls.push({ fn, pRow: args.p_row });
+        return Promise.resolve({ data: null, error: result.error });
+      },
     };
     return { writer, calls };
   }
 
-  it("targets the dedupe_hash conflict target", () => {
-    // Without this the unique index rejects the second sighting and the same posting from
-    // three sources becomes three feed cards.
+  it("goes through the upsert_job RPC, not a PostgREST upsert", () => {
+    // The reason for the RPC is not stylistic: PostgREST renders do-update values as
+    // literals, so it cannot express `sighting_count = sighting_count + 1`. A future
+    // "simplification" back to `.from("jobs").upsert()` would pass every payload assertion
+    // below and silently break the sighting count again — which is exactly what happened
+    // before migration 0010.
     const { writer, calls } = fakeWriter({ error: null });
     void upsertCanonicalJob(writer, makeJob(), "hash-1");
-    expect(calls[0]?.options.onConflict).toBe("dedupe_hash");
+    expect(calls[0]?.fn).toBe("upsert_job");
   });
 
   it("writes the computed hash as the upsert key", () => {
     const { writer, calls } = fakeWriter({ error: null });
     void upsertCanonicalJob(writer, makeJob(), "hash-1");
-    expect(calls[0]?.values.dedupe_hash).toBe("hash-1");
+    expect(calls[0]?.pRow.dedupe_hash).toBe("hash-1");
   });
 
   it("maps camelCase fields to their snake_case columns", () => {
     const { writer, calls } = fakeWriter({ error: null });
     void upsertCanonicalJob(writer, makeJob(), "hash-1");
-    const values = calls[0]?.values ?? {};
+    const values = calls[0]?.pRow ?? {};
     expect(values.company_name).toBe("Acme Corp");
     expect(values.description_text).toBe("A description.");
     expect(values.country_code).toBe("DE");
     expect(values.salary_min).toBe(80000);
     expect(values.salary_currency).toBe("EUR");
+  });
+
+  // `jsonb_populate_record` silently ignores a key with no matching column, so a typo in the
+  // mapping is invisible from Postgres — the write succeeds and the field is simply always
+  // null. Asserting the key set is the only thing that catches it.
+  it("emits only keys that are real columns on jobs", () => {
+    const { writer, calls } = fakeWriter({ error: null });
+    void upsertCanonicalJob(writer, makeJob(), "hash-1");
+    const expected = [
+      "dedupe_hash", "title", "title_norm", "company_name", "company_domain",
+      "location_raw", "city", "region", "country_code", "work_mode", "employment_type",
+      "seniority", "salary_min", "salary_max", "salary_currency", "salary_period",
+      "salary_raw", "description_text", "description_html", "skills", "posted_at",
+      "source_url", "apply_url", "status", "confidence", "raw",
+    ];
+    expect(Object.keys(calls[0]?.pRow ?? {}).sort()).toEqual([...expected].sort());
   });
 
   it("writes null rather than undefined for absent salary and description", () => {
@@ -374,7 +388,7 @@ describe("upsertCanonicalJob", () => {
       makeJob({ salary: null, descriptionText: null, applyUrl: null }),
       "hash-1",
     );
-    const values = calls[0]?.values ?? {};
+    const values = calls[0]?.pRow ?? {};
     expect(values.salary_min).toBeNull();
     expect(values.description_text).toBeNull();
     expect(values.apply_url).toBeNull();

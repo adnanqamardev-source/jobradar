@@ -199,18 +199,33 @@ describe("planClaim — lease", () => {
   });
 });
 
-describe("backoffFor — docs/02 §6.4 `2^n`", () => {
+describe("backoffFor — the documented 30s / 2m / 8m ladder", () => {
   it("uses the post-increment attempts value", () => {
-    // regression: the inline script passed the *pre*-increment value, so the first failure
-    // waited 2^0 = 1s where §6.4 specifies 2^1 = 2s.
-    expect(backoffFor(1)).toBe(2000);
-    expect(backoffFor(2)).toBe(4000);
-    expect(backoffFor(3)).toBe(8000);
+    // Regression guard: the inline script once passed the *pre*-increment value, so the first
+    // failure waited 2^0 = 1s. The off-by-one is still the property being pinned — only the
+    // values changed, from 2^n to the ladder that three documents specify.
+    expect(backoffFor(1)).toBe(30_000);
+    expect(backoffFor(2)).toBe(120_000);
+    expect(backoffFor(3)).toBe(480_000);
   });
 
-  it("never returns a negative exponent", () => {
-    expect(backoffFor(-5)).toBe(1000);
-    expect(backoffFor(0)).toBe(1000);
+  it("clamps below the first rung rather than indexing out of bounds", () => {
+    expect(backoffFor(-5)).toBe(30_000);
+    expect(backoffFor(0)).toBe(30_000);
+  });
+
+  // The ladder is positional and does not extrapolate. An unbounded doubling eventually
+  // produces a delay no scheduler can represent, and a task past max_attempts is terminal
+  // anyway — an ever-growing interval would only obscure that.
+  it("holds the last rung instead of growing without bound", () => {
+    expect(backoffFor(4)).toBe(480_000);
+    expect(backoffFor(50)).toBe(480_000);
+  });
+
+  it("increases strictly across the rungs that exist", () => {
+    const ladder = [1, 2, 3].map((n) => backoffFor(n));
+    expect(ladder).toEqual([...ladder].sort((a, b) => a - b));
+    expect(new Set(ladder).size).toBe(3);
   });
 });
 
@@ -262,9 +277,10 @@ describe("settleTask — failure", () => {
     expect(settleTask(task(), fail("upstream 500"), T0, "w").last_error).toBe("upstream 500");
   });
 
-  it("schedules the retry using the post-increment exponent", () => {
+  it("schedules the retry using the post-increment attempt count", () => {
     const s = settleTask(task({ attempts: 0 }), fail(), T0, "w");
-    expect(Date.parse(s.run_after) - T0.getTime()).toBe(2000);
+    // attempts 0 -> 1 after the failure increment, so the first rung (30s), not zero.
+    expect(Date.parse(s.run_after) - T0.getTime()).toBe(30_000);
   });
 
   // regression: the failure path left locked_at / locked_by set, so a re-queued task kept

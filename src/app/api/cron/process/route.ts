@@ -176,11 +176,18 @@ export async function GET(request: Request) {
 
     if (needsAuditLog(task, outcome)) {
       // docs/02b §6.4: terminal failure writes an audit_logs row (admin surface is BE-312).
+      //
+      // Column names are `target_type` / `target_id` / `meta`. An earlier revision wrote
+      // `entity_type` / `entity_id` / `detail`, which do not exist: PostgREST answers
+      // PGRST204 "Could not find the … column in the schema cache", the insert fails, and
+      // the only trace was the `console.warn` below. So the §6.4 audit requirement was unmet
+      // in practice and nothing reported it. `tests/integration/rls-policies.db.test.ts`
+      // asserts this insert actually lands.
       const { error: auditError } = await supabase.from("audit_logs").insert({
         action: "queue.task_failed",
-        entity_type: "task_queue",
-        entity_id: task.id,
-        detail: { kind: task.kind, attempts: settlement.attempts, error: settlement.last_error },
+        target_type: "task_queue",
+        target_id: task.id,
+        meta: { kind: task.kind, attempts: settlement.attempts, error: settlement.last_error },
       });
       if (auditError) {
         logger.warn("Cron process: audit log failed", { requestId, message: auditError.message });

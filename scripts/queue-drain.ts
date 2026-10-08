@@ -195,11 +195,16 @@ async function settle(client: Db, task: QueueTask, outcome: Outcome, now: Date) 
 
   if (needsAuditLog(task, outcome)) {
     // docs/02 §6.4: terminal failure writes an audit_logs entry (BE-108 owns the table).
+    //
+    // `target_type` / `target_id` / `meta` are the real column names. An earlier revision used
+    // `entity_type` / `entity_id` / `detail`, which do not exist — PostgREST answers PGRST204
+    // and the row is never written, so the §6.4 audit requirement was silently unmet. The
+    // warning below was the only evidence, which is why it read as healthy.
     const { error: auditErr } = await client.from("audit_logs").insert({
       action: "queue.task_failed",
-      entity_type: "task_queue",
-      entity_id: task.id,
-      detail: { kind: task.kind, attempts: s.attempts, error: s.last_error },
+      target_type: "task_queue",
+      target_id: task.id,
+      meta: { kind: task.kind, attempts: s.attempts, error: s.last_error },
     });
     if (auditErr) console.warn(`[queue-drain] audit log failed (${task.id}):`, auditErr.message);
   }

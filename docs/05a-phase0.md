@@ -61,7 +61,7 @@ Create `src/styles/tokens.css` with **every** colour, type, spacing, motion, and
 ### ENG-003 — Supabase project, migrations & seed
 **[DATA] [SEC]** · **Priority:** MUST · **Depends on:** ENG-001
 
-Stand up the Supabase project and write migration `0001_init.sql` implementing **every** enum, table, index, view, and function from [02 §5](./02-technical-architecture.md). Enable `pgvector` and `pg_cron`. Seed `skills` (~600 rows with aliases) and the default `sources` rows. Write `seed.sql` for local dev.
+Stand up the Supabase project and write migration `0001_init.sql` implementing **every** enum, table, index, view, and function from [02 §5](./02-technical-architecture.md). Enable `pgvector` and `pg_cron`. Seed the `skills` vocabulary **and** the default `sources` rows. Write `seed.sql` for local dev.
 
 **Done when:**
 - [x] All tables from [02 §5.3–5.8](./02-technical-architecture.md) exist with correct columns, types, FKs, and cascades — ✅ **2026-10-09 verified in the DDL**: 19 `create table` (excluding the `auth.users` stub), 13 enums, plus `v_ranked_jobs` and 4 functions. **Not** verified by `supabase db reset` — see the box below.
@@ -72,25 +72,48 @@ Stand up the Supabase project and write migration `0001_init.sql` implementing *
 - [ ] `supabase db reset` on a clean machine yields a working schema + seed — ❌ **never executed.** Docker Desktop is not installed on this machine, so no local Postgres. Every ✅ above is DDL inspection, which is exactly the "schema-green is not integration-green" case in `notes.md`.
 - [x] All migrations are idempotent / forward-only (no hand edits to applied migrations) — ✅ 9 migrations, `0001`–`0009`, additive and never edited after application.
 
-### ⚠️ Unrecorded gap: the skills vocabulary is 10 rows, not ~600
+### The skills vocabulary is 10 rows, and that is the agreed MVP floor
 
-The ticket body asks for ~600 seeded skills. `supabase/seed.sql` contains **10**:
-TypeScript · React · Next.js · PostgreSQL · Tailwind CSS · Python · AWS · Docker · Kubernetes ·
-GraphQL. Nothing in `docs/05a`, `docs/05b` or `docs/06` records the shortfall.
+**Decided 2026-10-09: 10 is the MVP floor, not a shortfall.** The ticket previously asked for
+~600 rows; that figure was aspirational and is now removed rather than left as an unmet claim.
 
-This is load-bearing, not cosmetic. `jobs.skills` is populated by the BE-106 matcher against
-exactly this vocabulary, and `jobs.skills` / `job_skills` both FK the canonical `skills` table —
-so skill scoring today can only ever recognise ten technologies. A posting for a Kubernetes
-engineer using Go, Terraform or AWS Lambda scores zero on the 35-point skills component, which
-is the heaviest weight in the scorer.
+`supabase/seed.sql` seeds exactly **10** skills, confirmed against the live local database
+after `pnpm db reset` (2026-10-09): `skills = 10`, `sources = 9`, `public` policies = 28,
+base tables = 20.
 
-`tests/unit/ingest-skills.test.ts` guards this *correctly*: it parses `supabase/seed.sql` and
-fails if the matcher and the database disagree in either direction. It is therefore a faithful
-guard over a 10-row vocabulary, not a broken one — which is why the gap has stayed invisible.
+| Skill | Slug | Aliases |
+|---|---|---|
+| TypeScript | `typescript` | `ts` |
+| React | `react` | `react.js`, `reactjs` |
+| Next.js | `nextjs` | `next`, `next.js` |
+| PostgreSQL | `postgresql` | `postgres`, `psql` |
+| Tailwind CSS | `tailwindcss` | `tailwind` |
+| Python | `python` | `py` |
+| AWS | `aws` | `amazon web services` |
+| Docker | `docker` | `containerization` |
+| Kubernetes | `kubernetes` | `k8s` |
+| GraphQL | `graphql` | `gql` |
 
-**Needs a decision:** is ~600 aspirational (and the ticket should say 10 is the MVP floor), or is
-the corpus genuinely 60× smaller than specified? Nothing else in Phase 1 depends on the answer,
-but `SCR-002`'s skills sub-score does.
+**What this costs, stated plainly.** `jobs.skills` is populated by the BE-106 matcher against
+exactly this list, and both `jobs.skills` and `job_skills` reference the canonical `skills`
+table — so a posting for a Kubernetes engineer using Go, Terraform or AWS Lambda scores zero
+on the skills component, which carries the heaviest weight in the scorer (35 of 100, `SCR-002`).
+
+That is an accepted MVP limitation, not an oversight, and it is bounded by the `unknown-is-never-0`
+rule already in `rules.ts`: an unrecognised skill makes a component *neutral* rather than
+penalising the job. The failure mode is therefore "this job is neither boosted nor buried",
+not "this job is ranked unfairly low".
+
+**Growing it is a data change, not a code change.** `tests/unit/ingest-skills.test.ts` parses
+`supabase/seed.sql` and fails if the matcher and the database disagree in either direction, so
+adding a skill to the seed without teaching the matcher about it is a red test rather than a
+silent miss. Widening the vocabulary is therefore: add rows to `supabase/seed.sql`, add
+patterns to `CANONICAL_SKILLS`, run the suite. No migration, no schema change.
+
+**Alias caution for whoever does it.** `next` is a seed alias but is deliberately **excluded**
+from the matcher's patterns — it is an ordinary English word, and `\bnext\b` tags "the next
+step" as Next.js across a large share of the corpus. Every short alias needs the same audit
+before it becomes a pattern; see the BE-106 notes in [05b ING-006](./05b-phase1.md).
 
 ---
 

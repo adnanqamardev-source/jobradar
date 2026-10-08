@@ -39,7 +39,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { computeDedupeHash, normaliseForHash, trigramSimilarity } from "@/lib/ingest/dedupe";
+import { computeDedupeHash, normaliseForHash, toJobRow, trigramSimilarity } from "@/lib/ingest/dedupe";
 import type { CanonicalJob } from "@/types/canonical-job";
 
 const URL = process.env.TEST_SUPABASE_URL;
@@ -83,16 +83,22 @@ suite("dedupe against a real Postgres", () => {
    *
    * `company_name` carries the tag rather than `title`, because the dedupe hash is built from
    * the title and company identity — tagging the title would change the hash under test.
+   *
+   * `titleNorm` is **derived from the title**, never hardcoded. An earlier revision pinned it
+   * to one constant, so two different titles silently compared as identical and the
+   * "different roles are not merged" test passed for the wrong reason.
    */
   function makeJob(overrides: Partial<CanonicalJob> = {}): { job: CanonicalJob; hash: string } {
+    const title = overrides.title ?? "Principal Software Engineer";
     const job: CanonicalJob = {
       externalId: "it-1",
       sourceUrl: "https://example.invalid/jobs/1",
       applyUrl: null,
       companyName: `${TAG}acme`,
       companyDomain: null,
-      title: "Principal Software Engineer",
-      titleNorm: "principalsoftwareengineer",
+      title,
+      // Same transform `normalize.ts` applies, so the fuzzy pass sees realistic input.
+      titleNorm: title.toLowerCase().replace(/[^a-z0-9]/g, ""),
       descriptionText: "A scraped body.",
       descriptionHtml: null,
       location: { city: "Berlin", region: null, countryCode: "DE", raw: "Berlin" },
@@ -119,34 +125,14 @@ suite("dedupe against a real Postgres", () => {
   }
 
   /**
-   * Insert on `dedupe_hash`, mirroring what `upsertCanonicalJob` sends.
+   * Re-sight one job through the same RPC production uses.
    *
-   * Written out rather than calling the production helper, because the helper's structural
-   * `JobWriter` type is satisfied by the real client too — but asserting on the returned
-   * row keeps this test reading as "what does the table end up holding", which is the
-   * question ING-007 actually asks.
+   * `upsertCanonicalJob` is deliberately **not** called here: it would prove the TypeScript
+   * sends a payload, not that the SQL increments. This helper goes through `toJobRow` and the
+   * function directly, so a regression in the migration's `do update` clause fails this test.
    */
   async function upsert(job: CanonicalJob, hash: string): Promise<void> {
-    const { error } = await admin
-      .from("jobs")
-      .upsert(
-        {
-          dedupe_hash: hash,
-          title: job.title,
-          title_norm: job.titleNorm,
-          company_name: job.companyName,
-          company_domain: job.companyDomain,
-          city: job.location.city,
-          country_code: job.location.countryCode,
-          work_mode: job.workMode,
-          employment_type: job.employmentType,
-          seniority: job.seniority,
-          description_text: job.descriptionText,
-          source_url: job.sourceUrl,
-          status: job.status,
-        },
-        { onConflict: "dedupe_hash" },
-      );
+    const { error } = await admin.rpc("upsert_job", { p_row: toJobRow(job, hash) });
     if (error) throw new Error(`upsert: ${error.message}`);
   }
 
@@ -171,27 +157,45 @@ suite("dedupe against a real Postgres", () => {
     expect(data?.[0]?.sighting_count).toBe(3);
   });
 
-  it("bumps last_seen_at on a repeat sighting", async () => {
-    const { job, hash } = makeJob({ title: "Repeat Sighting Role" });
+  // Pins the `first_seen_at = t.first_seen_at` clause in migration 0010 directly.
+  //
+  // The production payload does **not** carry `first_seen_at` — `toJobRow` omits it, so the
+  // column default (`now()`) sets it on insert. An earlier version of this test passed a
+  // `firstSeenAt` through the job, which the payload silently dropped, so it was asserting
+  // against a value that never reached the database. This version back-dates the column with
+  // a direct write and then re-sights, so a reset is unambiguous.
+  it("preserves first_seen_at across a re-sighting and refreshes last_seen_at", async () => {
+    const { job, hash } = makeJob({ title: "First Seen Preservation" });
 
-    const before = new Date(Date.now() - 60_000).toISOString();
-    await upsert({ ...job, firstSeenAt: before, lastSeenAt: before }, hash);
-    await upsert({ ...job, firstSeenAt: before, lastSeenAt: before }, hash);
+    await upsert(job, hash);
+
+    // Back-date both columns so a refresh is distinguishable from "unchanged".
+    const backdated = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { error: backdateErr } = await admin
+      .from("jobs")
+      .update({ first_seen_at: backdated, last_seen_at: backdated })
+      .eq("dedupe_hash", hash);
+    if (backdateErr) throw new Error(`backdate: ${backdateErr.message}`);
+
+    await upsert(job, hash);
 
     const { data, error } = await admin
       .from("jobs")
-      .select("first_seen_at, last_seen_at")
+      .select("first_seen_at, last_seen_at, sighting_count")
       .eq("dedupe_hash", hash);
     if (error) throw new Error(`select: ${error.message}`);
 
-    // Asserted as an exact ISO string rather than through `new Date(...)`: the column is
-    // `timestamptz`, and comparing a `Date` to a `Date` here would type as `any` and hide
-    // whether the value round-tripped. `first_seen_at` must not be reset by a re-sighting —
-    // a job re-listed daily would otherwise look brand new forever and never decay to `stale`
-    // (ING-010).
-    const firstSeen = data?.[0]?.first_seen_at;
-    expect(typeof firstSeen).toBe("string");
-    expect(new Date(firstSeen as string).toISOString()).toBe(new Date(before).toISOString());
+    const row = data?.[0];
+    // first_seen_at must survive: a job re-listed daily would otherwise look brand new
+    // forever and never decay to `stale` (ING-010).
+    expect(new Date(row?.first_seen_at as string).toISOString()).toBe(
+      new Date(backdated).toISOString(),
+    );
+    // last_seen_at must move — this is the re-sighting time.
+    expect(new Date(row?.last_seen_at as string).getTime()).toBeGreaterThan(
+      new Date(backdated).getTime(),
+    );
+    expect(row?.sighting_count).toBe(2);
   });
 
   // ING-007 test 2. The guard against over-merging: distinct roles at one employer stay

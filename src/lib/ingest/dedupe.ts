@@ -262,14 +262,14 @@ export function pickSurvivor(
  * Structural, like `ScoreWriter` in `lib/scoring`, so tests pass a small double and the
  * privilege requirement is visible in the signature. Ingestion is service-role work: it
  * writes the shared corpus, which no single user owns.
+ *
+ * `rpc` rather than `from("jobs").upsert(...)`: see the note on `upsertCanonicalJob`.
  */
 export interface JobWriter {
-  from(table: "jobs"): {
-    upsert(
-      values: unknown,
-      options: { onConflict: string },
-    ): Promise<{ data: unknown; error: { message: string } | null }>;
-  };
+  rpc(
+    fn: "upsert_job",
+    args: { p_row: Record<string, unknown> },
+  ): Promise<{ data: unknown; error: { message: string } | null }>;
 }
 
 export type UpsertOutcome =
@@ -277,54 +277,75 @@ export type UpsertOutcome =
   | { ok: false; error: { code: string; message: string } };
 
 /**
- * Upsert one canonical job on `dedupe_hash`.
+ * The row sent to `upsert_job`, in snake_case column names.
  *
- * `onConflict: "dedupe_hash"` is what makes the exact pass an upsert rather than an insert:
- * the unique index rejects the second sighting, and the `do update` branch bumps
- * `last_seen_at` and `sighting_count`. Without it the same posting from three sources is
- * three rows and three feed cards — the failure `docs/02b` §6.2 exists to prevent.
+ * Exported so the column mapping is assertable on its own. A typo here is silent in the sense
+ * that Postgres will happily accept a `jsonb` key it does not use — `jsonb_populate_record`
+ * ignores keys with no matching column — so the mapping is pinned by test rather than trusted.
+ */
+export function toJobRow(job: CanonicalJob, hash: string): Record<string, unknown> {
+  return {
+    dedupe_hash: hash,
+    title: job.title,
+    title_norm: job.titleNorm,
+    company_name: job.companyName,
+    company_domain: job.companyDomain,
+    location_raw: job.location.raw,
+    city: job.location.city,
+    region: job.location.region,
+    country_code: job.location.countryCode,
+    work_mode: job.workMode,
+    employment_type: job.employmentType,
+    seniority: job.seniority,
+    salary_min: job.salary?.min ?? null,
+    salary_max: job.salary?.max ?? null,
+    salary_currency: job.salary?.currency ?? null,
+    salary_period: job.salary?.period ?? null,
+    salary_raw: job.salary?.raw ?? null,
+    description_text: job.descriptionText,
+    description_html: job.descriptionHtml,
+    skills: job.skills,
+    posted_at: job.postedAt,
+    source_url: job.sourceUrl,
+    apply_url: job.applyUrl,
+    status: job.status,
+    confidence: job.confidence,
+    raw: job.raw,
+  };
+}
+
+/**
+ * Insert or re-sight one canonical job, keyed on `dedupe_hash`.
  *
- * Only the sighting bookkeeping is updated on conflict. The payload columns are left alone
- * on purpose: the first sighting is the one whose `source_id` and `raw` payload the rest of
- * the pipeline attributes, and letting a later sighting overwrite them would repoint an
- * already-scored row at a different source.
+ * ## Why an RPC and not `.upsert()`
+ *
+ * §6.2 requires `do update set last_seen_at = now(), sighting_count = jobs.sighting_count + 1`.
+ * **PostgREST cannot express that.** It renders the do-update values from the JSON payload as
+ * literals, and `sighting_count + 1` is an expression over the existing row — there is nothing
+ * to send. This was not a theoretical concern: the first run of
+ * `tests/integration/dedupe.db.test.ts` against a real Postgres left `sighting_count` at 1
+ * after three upserts of the same posting.
+ *
+ * The rejected alternative was upsert-then-increment in two statements. It is one extra round
+ * trip, and two workers re-sighting the same posting can each read `1` and each write `2`, so
+ * the count under-reports. `upsert_job` (migration `0010`) does the read-modify-write inside
+ * one statement, under the row lock.
+ *
+ * Only the sighting bookkeeping is touched on conflict. The payload columns are left alone on
+ * purpose: the first sighting is the one whose `source_id` and `raw` payload the rest of the
+ * pipeline attributes, and letting a later sighting overwrite them would repoint an
+ * already-scored row at a different source. Merging a richer description is the fuzzy pass's
+ * job, not this one's.
+ *
+ * `first_seen_at` is preserved on conflict so a job re-listed daily does not look brand new
+ * forever and never decays to `stale` (ING-010).
  */
 export async function upsertCanonicalJob(
   writer: JobWriter,
   job: CanonicalJob,
   hash: string,
 ): Promise<UpsertOutcome> {
-  const { error } = await writer.from("jobs").upsert(
-    {
-      dedupe_hash: hash,
-      title: job.title,
-      title_norm: job.titleNorm,
-      company_name: job.companyName,
-      company_domain: job.companyDomain,
-      location_raw: job.location.raw,
-      city: job.location.city,
-      region: job.location.region,
-      country_code: job.location.countryCode,
-      work_mode: job.workMode,
-      employment_type: job.employmentType,
-      seniority: job.seniority,
-      salary_min: job.salary?.min ?? null,
-      salary_max: job.salary?.max ?? null,
-      salary_currency: job.salary?.currency ?? null,
-      salary_period: job.salary?.period ?? null,
-      salary_raw: job.salary?.raw ?? null,
-      description_text: job.descriptionText,
-      description_html: job.descriptionHtml,
-      skills: job.skills,
-      posted_at: job.postedAt,
-      source_url: job.sourceUrl,
-      apply_url: job.applyUrl,
-      status: job.status,
-      confidence: job.confidence,
-      raw: job.raw,
-    },
-    { onConflict: "dedupe_hash" },
-  );
+  const { error } = await writer.rpc("upsert_job", { p_row: toJobRow(job, hash) });
 
   if (error) {
     return { ok: false, error: { code: "dedupe_upsert_failed", message: error.message } };
