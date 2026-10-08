@@ -456,6 +456,34 @@ select * from task_queue
 | `ip` | `inet` |
 | `at` | `timestamptz default now()` |
 
+### 5.8a `audit_logs`
+
+```sql
+-- Append-only operator log. Added here 2026-10-09: the table appeared in the ER diagram and in
+-- 0001_init.sql but had no DDL in docs/, so its column names were undiscoverable. Both queue
+-- executors (scripts/queue-drain.ts, src/app/api/cron/process/route.ts) wrote
+-- `entity_type` / `entity_id` / `detail`, which do not exist -- PostgREST answers PGRST204,
+-- the insert fails, and the only trace is a console.warn. docs/02b 6.4's "at max_attempts ->
+-- failed + audit_logs entry" was therefore unmet in practice. The names below are what the
+-- code must use. Column list read from the live local database, not from memory.
+create table audit_logs (
+  id          uuid primary key default gen_random_uuid(),
+  actor_id    uuid references profiles(id) on delete set null,  -- null = the system itself
+  action      text not null,          -- e.g. 'queue.task_failed'
+  target_type text,                   -- e.g. 'task_queue'
+  target_id   text,                   -- text, not uuid: not every target is a uuid
+  meta        jsonb,                  -- free-form detail
+  ip          inet,
+  at          timestamptz default now()
+);
+```
+
+RLS: **admin read only** (docs/03 §4.2). No insert policy exists for any role -- writes come
+from service-role code paths such as the queue's terminal-failure handler. `actor_id` is
+nullable on purpose so a system action with no human actor is representable.
+
+---
+
 ### 5.9 Views & functions
 
 ```sql

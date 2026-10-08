@@ -171,7 +171,12 @@ LLM rationale 2–3 sentences →  job_scores.explanation
 
 - Vercel Cron hits `/api/cron/process` every minute with `CRON_SECRET`.
 - Worker claims ≤ 25 tasks (`FOR UPDATE SKIP LOCKED`), runs each in a try/catch with a 5-minute lease.
-- Failure → `attempts += 1`, `run_after = now() + 2^n seconds` (n = attempts), status back to `pending`; at `max_attempts` → `failed` + `audit_logs` entry + admin surface.
+- Failure → `attempts += 1`, `run_after = now() + <backoff ladder>`, status back to `pending`; at `max_attempts` → `failed` + `audit_logs` entry + admin surface.
+  **Corrected 2026-10-09: the ladder is 30s / 2m / 8m, not `2^n`.** This line previously
+  specified `2^n` seconds and was the sole document out of four to say so; the code followed it
+  and was the minority. `docs/03` §5.2, `docs/04` §5.9 and `docs/05b` ING-008 all specified the
+  ladder, and the decision is now recorded there and implemented in
+  `src/lib/queue/plan.ts` → `queueBackoffMs`.
 - Idempotency: every handler is safe to re-run (upserts keyed by unique constraints, digests keyed by `digests.scheduled_for`).
 - Vercel function timeouts are respected by **batch size, not long-running loops** — if a batch is incomplete, the handler re-enqueues itself.
 
@@ -188,8 +193,8 @@ Two consequences worth stating, because both were bugs once:
   on every success.
 - The 5-minute lease is written to `locked_at`/`locked_by` **only**. `run_after` carries
   backoff scheduling alone — since the claim orders by `run_after`, storing a lease there
-  would make one column carry two clocks. `n` in `2^n` is the **post-increment** value, so
-  the first failure waits `2^1 = 2s`.
+  would make one column carry two clocks. The backoff attempt number is the
+  **post-increment** value, so the first failure waits the first rung (30s).
 
 **Where handler resolution lives (BE-108, 2026-10-09).** `src/lib/queue/dispatch.ts` maps
 `task_kind` → handler. It exists because the executors were resolving handlers themselves and
@@ -232,13 +237,37 @@ drained would make run duration depend on how much work happened to be pending.
   `pg_cron` was deliberately not created on this project (see `docs/07`). `/api/cron/digest`
   remains a `.gitkeep`.
 
-**A spec conflict, unresolved.** §6.4 above specifies backoff as `2^n` seconds, so the first
-failure waits 2s. `docs/05b` ING-008 specifies "30s / 2m / 8m". `plan.ts` implements `2^n`
-and its own docstring argues the post-increment reading is deliberate, so **the implemented
-behaviour follows §6.4 and the 05b figures are not satisfied.** Retrying a transient upstream
-failure after 2 seconds is aggressive; 30s is the more defensible number for metered APIs where
-a retry is a billed call. Not changed unilaterally — `plan.ts` is shared by both executors, so
-altering the curve is a protocol change, not a ticket detail. **Needs a decision.**
+**RESOLVED 2026-10-09 — the queue uses 30s / 2m / 8m.** Four documents disagreed: §6.4 above
+said `2^n` (first failure 2s), while `docs/03` §5.2, `docs/04` §5.9 and `docs/05b` ING-008 all
+said 30s / 2m / 8m. `plan.ts` had implemented the `2^n` minority.
+
+Decided in favour of the ladder and implemented. A retry of a **metered** source is a billed
+call — Adzuna and Firecrawl both price per request, and `RunCtx.onRequest` counts retries for
+exactly that reason — and this wait happens while the row is `pending` and **no lease is
+held**, so a long ladder costs nothing but recovery latency. §6.4 above has been corrected to
+state the ladder rather than the formula.
+
+### ⚠️ The connector has a *different*, deliberately shorter ladder
+
+`lib/connectors/http.ts` retries with **2s / 4s / 8s**, and that is correct — do not
+"unify" it. The difference is structural, not an oversight:
+
+| | Queue | Connector |
+|---|---|---|
+| When the wait happens | between attempts, across separate invocations | **inside one task execution** |
+| Lease held? | no — the row is `pending` | **yes** — the row is `running` and leased |
+| Cost of a long wait | slower recovery | exceeds the 300s lease → the task is **reaped mid-sleep** and a second worker runs the same row |
+
+The queue ladder totals **630 seconds** of sleeping. Used by a connector inside a leased task,
+a single task would hold its lease for 10.5 minutes, `claim_tasks` would mark it `pending`, and
+two workers would ingest the same source concurrently.
+
+Both ladders now live in `src/lib/backoff.ts` under names that state the context
+(`queueBackoffMs`, `connectorBackoffMs`), with an **import-time guard** that throws if the
+connector ladder ever totals ≥ `LEASE_MS`. That is a condition not to discover in production;
+a module-load throw fails the suite and the build instead. Verified in both directions.
+
+`docs/04` §5.9's Firecrawl row ("3 (30s/2m/8m)") conflates the two and is corrected there.
 
 **Where the claim is implemented (FND-002, 2026-10-06).** `FOR UPDATE SKIP LOCKED` cannot be
 expressed through `supabase-js` — its query builder composes select/update calls and has no

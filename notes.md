@@ -88,6 +88,29 @@ detail lives in the tables above; here is only the rule and its trigger.
 
 ### Process
 
+- **`docs/02a-schema.md` is NOT valid UTF-8 — edit it byte-level or you destroy it.** A 35-line
+  append turned into 178 insertions / 108 deletions because I read it with `readFileSync(f,
+  "utf8")` and wrote it back the same way. Node decodes each invalid byte to U+FFFD on read, so
+  the write replaces the original bytes with EF BF BD and re-normalises every other line. This is
+  the same failure as the 2026-10-06 `docs/07` loss, and it survived because **U+FFFD count
+  cannot tell you which kind of damage you have**: `docs/06` also has 30 U+FFFD but is *valid*
+  UTF-8 with replacement chars already baked in, so a normal utf8 edit there is lossless. The
+  only reliable test is the round trip —
+  `node -e "const b=require('fs').readFileSync(F);console.log(Buffer.from(b.toString('utf8'),'utf8').equals(b))"`
+  — and the only safe edit is latin1 in and latin1 out (a 1:1 byte↔codepoint map), with the
+  inserted block pure ASCII. Currently `02a-schema.md` is the **only** file in `docs/` that
+  fails that test; re-run the check before editing any doc, not just this one. See
+  "Schema-green is not integration-green" for the sibling lesson: the diff *shape* is the tell.
+- **Restore with `git checkout` before re-applying, and take the backup BEFORE the mutation.**
+  Two self-inflicted losses in one session: a restore script that read a file into a PowerShell
+  variable, had the variable come back null, and then wrote null over the source; and a
+  perturb-and-restore helper whose "original" was captured *after* the edit, so it faithfully
+  restored the broken value. Both looked like working scripts. Assert the backup is non-empty
+  before writing, and never let a restore depend on a value read in the same breath as the
+  mutation.
+- **A docs append is roughly additive.** `git diff --numstat` is the check. A large delete
+  ratio means the file was rewritten, not edited — which is how the `02a` corruption was caught
+  after the fact, and how the 2026-10-06 `docs/07` loss was caught.
 - **Schema-green is not integration-green.** Before relying on an API assumption (price,
   dimensions, 429 behaviour), make the live call once.
 - **Docs' literals are tests' inputs.** If a doc shows an example value, the schema/code

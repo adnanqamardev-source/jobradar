@@ -618,7 +618,16 @@ supabase.from('v_ranked_jobs')
 
 | Service | Timeout | Retries | On final failure | User impact |
 |---|---|---|---|---|
-| Firecrawl | 30s | 3 (30s/2m/8m) | source paused at 5 consecutive | **None** â€” corpus keeps serving |
+| Firecrawl | 30s | 3 (**2s/4s/8s** — see note) | source paused at 5 consecutive | **None** — corpus keeps serving |
+
+> **Note on the retry column (corrected 2026-10-09).** This table previously read
+> "3 (30s/2m/8m)", which is the **queue's** ladder, not the connector's. A connector retry
+> happens *inside* one leased task execution, so a 630s ladder against the 5-minute lease in
+> [02b §6.4](./02b-subsystems.md) would let `claim_tasks` reap the row mid-sleep and a second
+> worker would start the same task — duplicate ingestion. The connector ladder is 2s/4s/8s
+> (14s total), and `src/lib/backoff.ts` throws at import if it ever grows to meet the lease.
+> The **task** retry ladder is 30s/2m/8m, because that wait happens between invocations with
+> no lease held. Both are named for their context; do not unify them.
 | Job APIs | 15s | 3 | run `partial`, source amber/red | **None** |
 | OpenRouter embeddings | 20s | 2 | job queued, scored when embedding lands | Slight delay. **Free tier returns HTTP 429 under load â€” treat 429 as retryable, honour `Retry-After`** |
 | OpenRouter rationale | 20s | 1 | `explanation = null` | Fallback to breakdown |

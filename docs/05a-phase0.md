@@ -70,7 +70,7 @@ Stand up the Supabase project and write migration `0001_init.sql` implementing *
 - [x] Full-text GIN index on `jobs` title+description; trigram on `title_norm`/`company_domain` — ✅ `to_tsvector('english', …)` GIN plus `idx_jobs_title_norm_trgm` / `idx_jobs_company_domain_trgm`.
 - [x] `v_ranked_jobs` view and `move_application()` function work as specified — ✅ both present; `v_ranked_jobs` carries `security_invoker = true` (asserted in `migration-drift.test.ts`, without which the view would silently bypass RLS) and exposes the `final_score`/`breakdown`/`explanation`/`scored_at` columns.
 - [ ] `supabase db reset` on a clean machine yields a working schema + seed — ✅ **2026-10-09: executed.** All ten migrations apply from empty (`0001`–`0010`), and the seed runs. Live counts afterwards: **skills = 10, sources = 9, public policies = 28, base tables = 20.** This was the box behind ENG-003, ENG-004, ONB-008 and ING-013 all at once.
-- [x] All migrations are idempotent / forward-only (no hand edits to applied migrations) — ✅ 9 migrations, `0001`–`0009`, additive and never edited after application.
+- [x] All migrations are idempotent / forward-only (no hand edits to applied migrations) — ✅ **10** migrations, `0001`–`0010`, additive and never edited after application. `0010_upsert_job.sql` was added 2026-10-09 for the BE-107 sighting increment.
 
 ### The skills vocabulary is 10 rows, and that is the agreed MVP floor
 
@@ -124,24 +124,28 @@ Implement the policy table from [03 §4.2](./03-security-and-access.md): RLS **e
 
 **Done when:**
 - [x] `select * from pg_tables` shows RLS enabled for every app table — ✅ verified in the DDL: 19 `create table`, 19 `enable row level security`, 19 `force`. Confirmed against the live local database 2026-10-09: **28 policies across 20 public tables.**
-- [x] Test: user A cannot `select`/`update`/`delete` user B's `profiles`, `job_scores`, `applications`, `saved_searches`, `resume_versions`, `digests` — ✅ `tests/integration/rls-policies.db.test.ts`, 22 tests against a real Postgres with **real user JWTs**, all green.
+- [x] Test: user A cannot `select`/`update`/`delete` user B's `profiles`, `job_scores`, `applications`, `saved_searches`, `resume_versions`, `digests` — ✅ `tests/integration/rls-policies.db.test.ts` against a real Postgres with **real user JWTs**.
 - [x] Test: authenticated user can `select` `jobs`/`skills`/`companies`/`sources` but `insert` fails — ✅ four read tests and two insert-denial tests (`jobs` and `skills`).
-- [x] Test: `task_queue`, `scrape_runs`, `audit_logs` return nothing for a normal authenticated role — ✅ each table is seeded with a service-role row first, so "zero rows" means *filtered*, not *empty*.
-- [x] Test: a user cannot grant themselves Pro — ✅ **corrected 2026-10-09: this box said `subscriptions.plan`, and there is no such column.** The live schema puts `plan` on `profiles`; `subscriptions` carries `status`, `price_id`, `stripe_customer_id`, `current_period_end`, `cancel_at_period_end`. Both are now tested, because the guarantee spans the two: `profiles.plan` is what the UI reads, `subscriptions.status` is what Stripe writes.
+- [ ] Test: `task_queue`, `scrape_runs`, `audit_logs` return nothing for a normal authenticated role — ⚠️ **the tests exist but three of them cannot fail.** They assert zero rows **without seeding a row first**, and all three tables are empty on a fresh stack (`count = 0` measured for `task_queue` and `audit_logs`; nothing in the repo inserts into `audit_logs` except the code under test). Proven: with `scrape_runs` emptied *and* RLS disabled (`relrowsecurity = f`), both `scrape_runs` tests **pass**. They must seed a service-role row and assert the user's client still sees nothing.
+- [x] Test: a user cannot grant themselves Pro — ✅ **corrected 2026-10-09: this box said `subscriptions.plan`, and there is no such column.** The live schema puts `plan` on `profiles`; `subscriptions` carries `status`, `price_id`, `stripe_customer_id`, `current_period_end`, `cancel_at_period_end`. Both are tested, because the guarantee spans the two: `profiles.plan` is what the UI reads, `subscriptions.status` is what Stripe writes.
 - [x] Test: `job_scores` `insert`/`update` as a normal user **fails** (scorer is service-role only) — ✅ two tests. This is the property BE-204's `persistScore` depends on: a user must not be able to manufacture their own perfect score.
 - [x] Test: admin can `select` `scrape_runs` and `sources`, but **cannot** `select` another user's `applications` — ✅ admin is granted through `app_metadata` (the only channel `docs/03` §3.2 allows, and the one a user cannot set for themselves), then the JWT is re-issued so it carries the new claim.
 
-### ⚠️ What this ticket was, until today
+### ⚠️ What this ticket is, precisely
 
-Every one of the seven boxes above was unticked, and that was correct: **no test in the repo
-proved any RLS policy blocked anything.** `migration-drift.test.ts` asserted the SQL *text* —
-that `alter table … force row level security` was present, that every policy mentioned
-`(select auth.uid())` — which proves a policy was written and not that it fires.
-`docs/06` §3 recorded FND-003 as "Verified with `pg_policies`", which is a catalogue query.
+**Six of the seven boxes are genuinely verified. One is not.** `tests/integration/rls-policies.db.test.ts`
+has 22 tests; nineteen of them earn their assertions. The three named above do not, and the
+proof is mechanical rather than a judgement call: disable RLS on the table, empty it, and the
+test still passes.
 
-The suite exists now, and writing it immediately found a real defect: `audit_logs` has
-`target_type` / `target_id` / `meta`, and both queue executors were inserting into
-`entity_type` / `entity_id` / `detail`. See the BE-108 entry in [06 §4.1](./06-work-breakdown.md).
+The fix is a few lines per test — insert a row with the service role first, then assert the
+user's client sees zero — which is what `tests/integration/dedupe.db.test.ts` in the same
+directory already does. Until that lands, treat RLS on `task_queue`, `scrape_runs` and
+`audit_logs` as **unverified**, and note that `audit_logs` is the table the queue's
+terminal-failure path writes to.
+
+`docs/06` §3 previously recorded FND-003 as "Verified with `pg_policies`", which is a catalogue
+query: it shows a policy exists and cannot show it denies anything.
 
 **Two properties worth keeping in mind when reading the file:**
 
@@ -152,6 +156,10 @@ The suite exists now, and writing it immediately found a real defect: `audit_log
   candidate out. Asserting on the error message alone makes a suite that fails on a policy
   working exactly as documented, so the tests assert the write **did not happen** and read the
   row back with the service role to prove it.
+- The suite does not clean up `task_queue`, `scrape_runs` or `audit_logs` (no user FK, so the
+  `auth.users` cascade does not reach them). Each run adds rows, which is what made the
+  `scrape_runs` tests accidentally non-vacuous in one run — an order-dependent result, and the
+  clearest sign the seeding fix is needed.
 
 ---
 

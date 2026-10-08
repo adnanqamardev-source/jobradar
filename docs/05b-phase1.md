@@ -194,7 +194,7 @@ result. Replaces hand-typing four wizard steps — not a replacement for them.
 - [x] `resumes` table + owner-only RLS on the table **and** on `storage.objects`, with `force row level security` ([03 §4.2a](./03-security-and-access.md))
 - [x] Signed upload/download URLs, 1h expiry; no public URL is ever stored or returned
 - [x] MIME type and size validated server-side — the client-supplied type is not trusted
-- [ ] `supabase db reset` applies `0002_resumes.sql` from empty ⚠️ **never executed — no Postgres on the dev machine**
+- [x] `supabase db reset` applies `0002_resumes.sql` from empty — ✅ **executed 2026-10-09.** All ten migrations apply from empty and the seed runs. RLS integration coverage for `resumes` is a separate, still-open box below.
 - [ ] RLS integration test proves user B cannot read user A's row or file
 - [ ] Account deletion (BE-313) removes the storage objects, not just the row
 
@@ -479,9 +479,11 @@ executors are fixed.
 `/api/cron/digest` is still a `.gitkeep`: that is BE-309, and it needs a Resend client.
 
 **Not verified end-to-end.** No route has been executed against a live project — the unit
-tests cover the pure decisions, and the routes are thin executors of them, but the RPC call,
-the inserts and the RLS interaction are unexercised. Docker Desktop is not installed on this
-machine, so the integration path is unavailable.
+tests cover the pure decisions, and the routes are thin executors of them, but the RPC
+call, the inserts and the RLS interaction are unexercised. A local stack **is** available
+now (Docker Desktop 4.93.0, installed under `%LOCALAPPDATA%\\Programs\\DockerDesktop` rather
+than the default path — which is why an earlier note here wrongly said it was not
+installed), so this is achievable and simply not yet done.
 
 ---
 
@@ -550,7 +552,7 @@ interchangeable. Adds a `remote_scope` enum, India-aware salary parsing, and the
 - [x] Lakh/crore is resolved **before** the number scan (`15L` → `1500000`, not `15`) and Indian `3-2-3` grouping is handled
 - [x] `v_ranked_jobs` exposes `remote_scope`, and the composite index leads with `work_mode`
 - [x] Unit tests cover each notation and both remote phrasings
-- [ ] `supabase db reset` applies `0003_remote_scope.sql` ⚠️ **never executed**
+- [x] `supabase db reset` applies `0003_remote_scope.sql` — ✅ **executed 2026-10-09** as part of the full `db reset`.
 - [ ] FE-120 wires the filter end-to-end (Phase 2)
 
 ---

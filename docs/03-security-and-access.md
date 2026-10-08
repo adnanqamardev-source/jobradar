@@ -421,7 +421,7 @@ column above (422/401/403/404/429/402/500/503/409). Not asserted by a test — s
 
 | Failure point | Response |
 |---|---|
-| **API doesn't respond** | Connector timeout at 30s â†’ task retries 3Ã— at 30s/2m/8m â†’ then `failed`. Feed keeps serving the last good corpus; **the app never blocks on a source**. Admin sees the source flagged amber at 3 failures, paused at 5. ⚠️ **2026-10-09: the implemented backoff is `2^n` (2s, 4s, 8s), not 30s/2m/8m.** docs/04 §5.9 and docs/05b ING-008 state 30s/2m/8m; docs/02b §6.4 says `2^n` and src/lib/queue/plan.ts follows it — three documents against one. Unresolved; see [02b §6.4a](./02b-subsystems.md). |
+| **API doesn't respond** | Connector timeout at 30s â†’ task retries 3Ã— at 30s/2m/8m â†’ then `failed`. Feed keeps serving the last good corpus; **the app never blocks on a source**. Admin sees the source flagged amber at 3 failures, paused at 5. ✅ **Resolved 2026-10-09: the queue implements 30s/2m/8m.** `docs/02b` §6.4's `2^n` formula was the lone outlier and has been corrected. The *connector* retry ladder is deliberately different (2s/4s/8s) because it runs inside a leased task — unifying them would let a task be reaped mid-sleep and ingested twice. See [02b §6.4a](./02b-subsystems.md). |
 | **Wrong password** | N/A â€” no passwords. Wrong OTP/code â†’ *"That code didn't match. Try again."* (5 attempts, then `account_locked`). |
 | **Magic link expired / reused** | *"This link has expired. Request a new one."* + one-click resend. Not an error page â€” a normal login state. |
 | **Payment fails** | Entitlements **unchanged** (never downgrade on a failed charge). `past_due` â†’ banner with update-card link. Grace 7 days â†’ `canceled` â†’ `plan='free'`. One dunning email at day 1, 3, 7. |
