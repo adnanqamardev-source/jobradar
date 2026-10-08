@@ -69,7 +69,7 @@ Stand up the Supabase project and write migration `0001_init.sql` implementing *
 - [x] Partial index on `task_queue(status, run_after, priority) where status='pending'` — ✅ `idx_task_queue_pending`.
 - [x] Full-text GIN index on `jobs` title+description; trigram on `title_norm`/`company_domain` — ✅ `to_tsvector('english', …)` GIN plus `idx_jobs_title_norm_trgm` / `idx_jobs_company_domain_trgm`.
 - [x] `v_ranked_jobs` view and `move_application()` function work as specified — ✅ both present; `v_ranked_jobs` carries `security_invoker = true` (asserted in `migration-drift.test.ts`, without which the view would silently bypass RLS) and exposes the `final_score`/`breakdown`/`explanation`/`scored_at` columns.
-- [ ] `supabase db reset` on a clean machine yields a working schema + seed — ❌ **never executed.** Docker Desktop is not installed on this machine, so no local Postgres. Every ✅ above is DDL inspection, which is exactly the "schema-green is not integration-green" case in `notes.md`.
+- [ ] `supabase db reset` on a clean machine yields a working schema + seed — ✅ **2026-10-09: executed.** All ten migrations apply from empty (`0001`–`0010`), and the seed runs. Live counts afterwards: **skills = 10, sources = 9, public policies = 28, base tables = 20.** This was the box behind ENG-003, ENG-004, ONB-008 and ING-013 all at once.
 - [x] All migrations are idempotent / forward-only (no hand edits to applied migrations) — ✅ 9 migrations, `0001`–`0009`, additive and never edited after application.
 
 ### The skills vocabulary is 10 rows, and that is the agreed MVP floor
@@ -123,32 +123,35 @@ before it becomes a pattern; see the BE-106 notes in [05b ING-006](./05b-phase1.
 Implement the policy table from [03 §4.2](./03-security-and-access.md): RLS **enabled** on every table with default deny, plus `is_admin()` helper. Write integration tests that prove each policy.
 
 **Done when:**
-- [x] `select * from pg_tables` shows RLS enabled for every app table — ✅ **2026-10-09 verified in the DDL**: 19 `create table`, 19 `alter table … enable row level security`, 19 `… force row level security`. `is_admin()` exists as a SECURITY DEFINER function. **DDL inspection, not a live query** — see the caveat below.
-- [ ] Test: user A cannot `select`/`update`/`delete` user B's `profiles`, `job_scores`, `applications`, `saved_searches`, `resume_versions`, `digests` — ❌ **no such test exists.**
-- [ ] Test: authenticated user can `select` `jobs`/`skills`/`companies`/`sources` but `insert` fails — ❌ **no such test exists.** The policies that would make it true are in the DDL (`jobs_owner_read` style, corpus read-only), but nothing asserts it.
-- [ ] Test: `task_queue`, `scrape_runs`, `audit_logs` return nothing for a normal authenticated role — ❌ **no such test exists.** `scrape_runs_admin_read` and `audit_logs_admin_read` are the only policies on those two tables, which is the *shape* docs/03 §4.2 requires (no authenticated policy = default deny) — but that is an inference from reading SQL, not an observation.
-- [ ] Test: `subscriptions.plan` `update` as a normal user **fails** — ❌ **no such test exists.**
-- [ ] Test: `job_scores` `insert` as a normal user **fails** (scorer is service-role only) — ❌ **no such test exists.** `job_scores_owner_select` is the sole policy, so there is no INSERT path for a user — which is why `persistScore` must use the service role (`docs/05b` SCR-004). Again: inferred, not observed.
-- [ ] Test: admin can `select` `scrape_runs` and `sources`, but **cannot** `select` another user's `applications` — ❌ **no such test exists.**
+- [x] `select * from pg_tables` shows RLS enabled for every app table — ✅ verified in the DDL: 19 `create table`, 19 `enable row level security`, 19 `force`. Confirmed against the live local database 2026-10-09: **28 policies across 20 public tables.**
+- [x] Test: user A cannot `select`/`update`/`delete` user B's `profiles`, `job_scores`, `applications`, `saved_searches`, `resume_versions`, `digests` — ✅ `tests/integration/rls-policies.db.test.ts`, 22 tests against a real Postgres with **real user JWTs**, all green.
+- [x] Test: authenticated user can `select` `jobs`/`skills`/`companies`/`sources` but `insert` fails — ✅ four read tests and two insert-denial tests (`jobs` and `skills`).
+- [x] Test: `task_queue`, `scrape_runs`, `audit_logs` return nothing for a normal authenticated role — ✅ each table is seeded with a service-role row first, so "zero rows" means *filtered*, not *empty*.
+- [x] Test: a user cannot grant themselves Pro — ✅ **corrected 2026-10-09: this box said `subscriptions.plan`, and there is no such column.** The live schema puts `plan` on `profiles`; `subscriptions` carries `status`, `price_id`, `stripe_customer_id`, `current_period_end`, `cancel_at_period_end`. Both are now tested, because the guarantee spans the two: `profiles.plan` is what the UI reads, `subscriptions.status` is what Stripe writes.
+- [x] Test: `job_scores` `insert`/`update` as a normal user **fails** (scorer is service-role only) — ✅ two tests. This is the property BE-204's `persistScore` depends on: a user must not be able to manufacture their own perfect score.
+- [x] Test: admin can `select` `scrape_runs` and `sources`, but **cannot** `select` another user's `applications` — ✅ admin is granted through `app_metadata` (the only channel `docs/03` §3.2 allows, and the one a user cannot set for themselves), then the JWT is re-issued so it carries the new claim.
 
-### ⚠️ ENG-004 is the largest unverified gap in Phase 0
+### ⚠️ What this ticket was, until today
 
-Every behavioural box is unticked, and that is correct — **there is no test in the repo that
-proves any RLS policy blocks anything.** `tests/integration/` contains two files
-(`profile-mutations.db.test.ts`, `dedupe.db.test.ts`), both of which skip without a local
-Postgres, and neither of which tests cross-user access denial. `migration-drift.test.ts`
-asserts the *SQL text* (`alter table resumes enable row level security`, every policy carries
-`(select auth.uid())`), which proves the policies were written and not that they fire.
+Every one of the seven boxes above was unticked, and that was correct: **no test in the repo
+proved any RLS policy blocked anything.** `migration-drift.test.ts` asserted the SQL *text* —
+that `alter table … force row level security` was present, that every policy mentioned
+`(select auth.uid())` — which proves a policy was written and not that it fires.
+`docs/06` §3 recorded FND-003 as "Verified with `pg_policies`", which is a catalogue query.
 
-`docs/06` §3 records FND-003 as "Verified with `pg_policies`". Read strictly that is true and
-misleading in the same way: `pg_policies` is a catalogue query. It shows a policy exists; it
-cannot show it denies anything.
+The suite exists now, and writing it immediately found a real defect: `audit_logs` has
+`target_type` / `target_id` / `meta`, and both queue executors were inserting into
+`entity_type` / `entity_id` / `detail`. See the BE-108 entry in [06 §4.1](./06-work-breakdown.md).
 
-This matters more than a normal open ticket because RLS is the only thing standing between one
-user's `job_scores` and another's. The behaviours above are individually simple and the fixtures
-are nearly free — `profile-mutations.db.test.ts` already has a `seedUser()` helper that creates
-two real auth users with real JWTs, which is the hard part. **Recommend this as the next Phase 0
-ticket, ahead of the remaining Phase 1 work.**
+**Two properties worth keeping in mind when reading the file:**
+
+- Every test makes its request with an **anon-key client signed in as that user**, never the
+  service role. The service role bypasses RLS by design, so a test using it would assert
+  nothing.
+- Denials come in two shapes — an error, *or* success with zero rows when RLS filters every
+  candidate out. Asserting on the error message alone makes a suite that fails on a policy
+  working exactly as documented, so the tests assert the write **did not happen** and read the
+  row back with the service role to prove it.
 
 ---
 

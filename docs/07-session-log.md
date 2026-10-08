@@ -105,7 +105,8 @@ contract *and* the queue protocol.
 
 - **`pnpm lint` reports a fake failure.** PowerShell's wrapper renders ESLint's stderr echo as
   `NativeCommandError`, so a clean run looks like it threw. Judge ESLint by
-  `node node_modules/eslint/bin/eslint.js .; $LASTEXITCODE` — it exits 0 silently.
+  `node node_modules/eslint/bin/eslint.js .;
+LASTEXITCODE` — it exits 0 silently.
 - **`pnpm typecheck` installs dependencies first.** It printed a full package list before
   running `tsc`. `pnpm config get verify-deps-before-run` is `undefined`, so pnpm 12's default
   pre-run verification is doing it. Harmless, but it means a "verification" command can mutate
@@ -1724,3 +1725,110 @@ twice, that is the one box in ENG-005 that should have a test and does not.
 Gates: `typecheck exit=0` · `lint exit=0` · `764 passed | 19 skipped`. Docs only — no code
 changed. Encoding verified: 0 U+FFFD in all four files (`docs/06` retains its 30 pre-existing
 ones, confirmed against HEAD's blob bytes).
+
+---
+
+## 2026-10-09 — Docker found, and three unrunnable gates immediately caught two real bugs
+
+The user pointed out they have Docker. They do — Docker Desktop 4.93.0, installed under
+`%LOCALAPPDATA%\Programs\DockerDesktop` rather than the default path, which is why
+`C:\Program Files\Docker\Docker\Docker Desktop.exe` was absent and I had recorded "not
+installed" twice. `notes.md` already says to re-run environment probes before repeating a
+blocker claim; this is the third time that rule would have paid off had I followed it sooner
+rather than after being told.
+
+With the stack up, three things that had been unexecutable for the whole project ran.
+
+### 1. BE-107's `sighting_count` was silently wrong
+
+`tests/integration/dedupe.db.test.ts` failed its own headline criterion on first execution:
+three upserts of one posting left `sighting_count` at **1**, not 3.
+
+Not a hash bug, not a payload bug. **PostgREST cannot express the increment.** It renders
+`on conflict … do update set <col> = <value>` with every value a literal, and §6.2 requires
+`sighting_count = jobs.sighting_count + 1` — an expression over the existing row, with nothing
+to send. The old code sent no `sighting_count`, so the column sat at `default 1` on insert and
+was untouched on conflict. Job count right, sighting count wrong, and `sighting_count` drives
+the "seen on N sources" chip — a user-visible lie, not a cosmetic defect.
+
+Fixed by migration `0010_upsert_job.sql`: one atomic statement doing the
+read-modify-write under the row lock. The rejected alternative (upsert, then a second
+incrementing update) costs a round trip and races — two workers each read 1, each write 2.
+
+### 2. The `audit_logs` write had never worked
+
+Found by the new RLS suite, which needed an `audit_logs` row and was refused. Both queue
+executors inserted into `entity_type` / `entity_id` / `detail`; the real columns are
+`target_type` / `target_id` / `meta`. PostgREST answers PGRST204, the insert fails, and the
+only trace was a `console.warn`.
+
+So `docs/02b` §6.4's "at max_attempts → failed + audit_logs entry" was **unmet in practice
+while the code looked like it met it**. Fixed in `queue-drain.ts` and
+`api/cron/process/route.ts`.
+
+The lesson generalises past this bug: a write against a table nobody had ever inserted into
+had never been exercised, and the failure mode was a warning line that reads as health. The
+RLS suite inserted into `audit_logs` for an unrelated reason and caught it.
+
+### 3. ENG-004 has tests now
+
+The largest unverified gap in Phase 0. RLS was enabled and forced on all 19 tables, and
+`migration-drift.test.ts` asserted only the SQL *text* — that proves a policy was written, not
+that it fires. `docs/06` called it "Verified with `pg_policies`", which is a catalogue query.
+
+`tests/integration/rls-policies.db.test.ts`: 22 tests, one per ENG-004 box plus
+`saved_searches` / `resume_versions` / `digests`, all green. Every request uses an **anon-key
+client signed in as that user**, never the service role — the service role bypasses RLS by
+design, so a test using it asserts nothing.
+
+Two boxes were also wrong about the schema: **there is no `subscriptions.plan` column** (plan
+lives on `profiles`; `subscriptions` has `status`, `price_id`, stripe ids). Both tables are now
+tested, since "a client cannot grant itself Pro" spans the two.
+
+A third lesson: RLS denials arrive in **two shapes** — an error, *or* success with zero rows
+when every candidate row is filtered out. A test asserting on the 42501 message fails against a
+policy working exactly as documented. The suite asserts the write did not happen and reads the
+row back with the service role.
+
+### My own test bugs, found by the same run
+
+Both had been passing while being wrong:
+
+- The `first_seen_at` test passed a value through the job object, but `toJobRow` never sends
+  that column — it was comparing a value that never reached the database. Now back-dates the
+  column directly and asserts the RPC preserves it.
+- The "different roles are not merged" fixture hardcoded `title_norm`, so two different titles
+  compared as **identical** and the test passed for the wrong reason. Now derived from the
+  title, as `normalize.ts` does it.
+
+### Backoff: decided, and my first attempt was wrong
+
+Chose 30s/2m/8m over `2^n`. A retry of a metered source is a billed call. The ladder is
+positional and clamped at both ends — an unbounded doubling eventually produces a delay no
+scheduler can represent, and a task past `max_attempts` is terminal anyway.
+
+My first implementation had a 1-based/0-based off-by-one: attempt 1 read index 1, so the first
+retry waited 2m. Caught by the tests I had just rewritten. The new cases pin the mapping and
+the clamping.
+
+### Live database, 2026-10-09
+
+`supabase db reset` applies all ten migrations from empty.
+
+| | |
+|---|---|
+| skills | 10 (the agreed MVP floor) |
+| sources | 9 |
+| public policies | 28 |
+| public base tables | 20 |
+
+Gates: `typecheck exit=0` · `lint exit=0` · `767 passed | 41 skipped`. With `TEST_SUPABASE_*`
+set: **41 passed** across all three integration files.
+
+### A note on the local stack keys
+
+`supabase start` and `supabase status -o env` print the local anon and service-role keys to
+stdout. They are throwaway local-development credentials, not production ones, but the same
+rule applies: a helper script now reads them into process env and runs vitest in the same
+shell, referencing them only by length. `notes.md` has recorded a leaked key twice; the third
+was avoidable purely by not echoing what a CLI already printed.

@@ -344,8 +344,35 @@ Two-pass dedupe per [02 §6.2](./02-technical-architecture.md): exact `dedupe_ha
 - [x] Hash = `sha256(norm_title | norm_company_domain | norm_city | work_mode)` with legal suffixes stripped
 - [x] `on conflict (dedupe_hash)` updates `last_seen_at` and increments `sighting_count`, **does not** duplicate
 - [x] Fuzzy pass merges `similarity > 0.85` + matching domain, keeping the richer description
-- [ ] Test: the same posting from 3 sources yields **one** `jobs` row with `sighting_count = 3` — **written, NOT RUN.** `tests/integration/dedupe.db.test.ts` asserts exactly this, but Docker Desktop is no longer installed on this machine, so no local Postgres and the file skips. Unverified until someone runs it with `TEST_SUPABASE_URL` set.
-- [x] Test: two genuinely different roles at the same company are **not** merged — unit level (below threshold, so no merge candidate) and at DB level in the same skipped file
+- [x] Test: the same posting from 3 sources yields **one** `jobs` row with `sighting_count = 3` — ✅ **ran 2026-10-09 and caught a real bug.** `tests/integration/dedupe.db.test.ts` is green against a live Postgres.
+- [x] Test: two genuinely different roles at the same company are **not** merged — ✅ green, and the fixture was fixed (see below)
+
+### ⚠️ The first run of these tests found a silent data bug
+
+Three upserts of one posting left **`sighting_count` at 1**, not 3. The cause was not the hash
+and not the payload: **PostgREST cannot express the increment.** It renders
+`on conflict … do update set <col> = <value>` with every value a literal, while
+`docs/02b` §6.2 requires `sighting_count = jobs.sighting_count + 1` — an expression over the
+existing row. The old code sent no `sighting_count`, so the column sat at its `default 1` on
+insert and was untouched on conflict. The job count was right and the sighting count was wrong,
+and `sighting_count` drives the "seen on N sources" chip, so this was a **user-visible lie**,
+not a cosmetic defect.
+
+Fixed by `supabase/migrations/0010_upsert_job.sql`: one atomic
+`insert … on conflict do update` that increments, refreshes `last_seen_at`, and **preserves
+`first_seen_at`**. The rejected alternative (upsert, then a second incrementing update) is two
+round trips and races — two workers can each read 1 and each write 2. `dedupe.ts` now calls
+`upsert_job` instead of `.upsert()`.
+
+Two of my own test bugs surfaced alongside it and are worth recording, because both passed
+before they were wrong:
+
+- The `first_seen_at` test passed a value through the job object, but `toJobRow` never sends
+  that column — the assertion was comparing a value that never reached the database. It now
+  back-dates the column with a direct write and asserts the RPC preserves it.
+- The "different roles are not merged" fixture hardcoded `title_norm`, so two different titles
+  compared as **identical** and the test passed for the wrong reason. `title_norm` is now
+  derived from the title exactly as `normalize.ts` does it.
 
 **Delivered 2026-10-09.** `src/lib/ingest/dedupe.ts`. No migration needed: `dedupe_hash text not null unique`, `pg_trgm`, and both GIN trigram indexes already exist (`0001_init.sql:275-276`).
 
@@ -373,9 +400,10 @@ Three decisions the docs did not settle, each recorded in the module docstring:
 `company-slug.ts` is reused rather than reimplemented — its docstring already reserved
 `stripLegalSuffix: true` for exactly this caller.
 
-**State of the ticket: NOT complete.** The two DB-level acceptance tests are the ones that
-matter for this ticket and neither has been executed. Unit coverage is 36 tests and green;
-`notes.md`'s "a gate that was never executed is not a pass" applies to the integration file.
+**State of the ticket: unit + integration green as of 2026-10-09.** 36 unit tests, and
+`tests/integration/dedupe.db.test.ts` (5 tests) passes against a live local Postgres. The two
+DB-level acceptance criteria that had never been executed are now the ones that caught the
+`sighting_count` bug.
 
 ---
 
@@ -387,7 +415,7 @@ Implement `task_queue` claim/run/retry with `FOR UPDATE SKIP LOCKED`, 5-minute l
 **Done when:**
 - [x] Claim statement matches [02 §6.4](./02-technical-architecture.md) — `claim_tasks` RPC (`0009`), called by `/api/cron/process`. **`scripts/queue-drain.ts` still claims by compare-and-swap**, which gives per-task mutual exclusion but not batch atomicity; local-dev only, and the open item below.
 - [x] Lease expiry returns orphaned tasks to `pending` — the reaper is inside `claim_tasks`, in the claim's transaction. Verified in `0009`'s own session, not here.
-- [ ] Backoff at 30s / 2m / 8m; at `max_attempts` → `failed` + `audit_logs` + admin visibility — **the `2^n` figures are implemented, not 30s/2m/8m.** `plan.ts` follows §6.4's `2^n` (first failure 2s). See the conflict recorded in [02b §6.4a](./02b-subsystems.md). Terminal-failure `audit_logs` writes are in both executors. **Needs a decision before this can be ticked.**
+- [x] Backoff at 30s / 2m / 8m; at `max_attempts` → `failed` + `audit_logs` + admin visibility — ✅ **2026-10-09: the code now matches the documents.** `plan.ts` had implemented `2^n` (2s/4s/8s) against three specs saying 30s/2m/8m. Changed to the positional ladder, clamped at both ends with no extrapolation: a retry of a **metered** source is a billed call, and `RunCtx.onRequest` counts retries for exactly that reason. Admin visibility is still BE-312.
 - [ ] Handlers are idempotent (test: run twice, same end state) — `planRescoreBatch` and `persistScore`'s `(user_id, job_id)` upsert are idempotent by construction, and both are unit-tested. **Not demonstrated end-to-end**, because no handler is runnable yet.
 - [x] Batch size respects Vercel function timeout; incomplete work re-enqueues itself — `/api/cron/process` runs exactly one batch of ≤25 and returns; `planRescoreBatch` returns a `requeue` verdict rather than looping.
 
@@ -405,9 +433,21 @@ eventually writes an `audit_logs` row identifying what is missing.
   no other kind is registered. Tasks fail legibly rather than silently, which is the improvement,
   but the queue cannot yet do useful work.
 - `scripts/queue-drain.ts` should call `claim_tasks` rather than compare-and-swap.
-- The backoff conflict above.
 - `pg_cron` is not created on this project (see `docs/07`), so scheduling is Vercel Cron
   dashboard configuration.
+
+### 🐛 Found and fixed 2026-10-09: the audit-log write never worked
+
+`docs/02b` §6.4 requires `audit_logs` on terminal failure. Both executors did attempt it —
+and both used the **wrong column names**: `entity_type` / `entity_id` / `detail`, where the
+table has `target_type` / `target_id` / `meta`. PostgREST answers `PGRST204` ("Could not find
+the … column in the schema cache"), the insert fails, and the only evidence was a
+`console.warn` that nobody was watching.
+
+So the requirement was unmet in practice while the code *looked* like it was met. It was found
+by `tests/integration/rls-policies.db.test.ts`, which needed an `audit_logs` row and was refused
+— the first time anything in this repo has written to that table under a real schema. Both
+executors are fixed.
 
 ---
 
