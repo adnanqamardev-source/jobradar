@@ -215,7 +215,8 @@ Docker Desktop is installed per-user at `%LOCALAPPDATA%\Programs\DockerDesktop` 
 — the engine pipe `dockerDesktopLinuxEngine` was absent. Launching the executable fixed it:
 
 ```powershell
-Start-Process "$env:LOCALAPPDATA\Programs\DockerDesktop\Docker Desktop.exe"
+Start-Process "
+env:LOCALAPPDATA\Programs\DockerDesktop\Docker Desktop.exe"
 ```
 
 The engine answered within ~6 seconds. **It does not survive a reboot in this state** — if the
@@ -1832,3 +1833,91 @@ stdout. They are throwaway local-development credentials, not production ones, b
 rule applies: a helper script now reads them into process env and runs vitest in the same
 shell, referencing them only by length. `notes.md` has recorded a leaked key twice; the third
 was avoidable purely by not echoing what a CLI already printed.
+
+---
+
+## 2026-10-09 — Docs reconciliation, and the file that is not UTF-8
+
+Follow-up to the audit that found 14 stale or overstated claims. All corrected. Two of them
+were wrong in the *other* direction — docs claiming less than was true — and those are the
+ones that needed admitting to.
+
+### ENG-004: six of seven boxes, not seven
+
+I had ticked all seven, citing "22 tests, all green". Three of those tests assert zero rows
+**without seeding a row first**, and all three tables are empty on a fresh stack
+(`task_queue` and `audit_logs` both measured at `count = 0`; nothing in the repo inserts into
+`audit_logs` except the code under test).
+
+Proven rather than argued: emptied `scrape_runs`, set `relrowsecurity = f`, ran the file —
+**both `scrape_runs` tests passed.** A test that passes with the policy removed is decoration.
+The box is unticked, and the file header now says six of seven are earned and names which.
+`audit_logs` is the table the queue's terminal-failure path writes to, so that is the gap that
+matters most in that file.
+
+### Two functions called "backoff" had drifted
+
+`http.ts` had its own `backoffBaseMs * 2 ** attempt` and its own docstring claiming §6.4 —
+while the queue's became the 30s/2m/8m ladder in the previous commit. I fixed one and reported
+the ticket done without noticing the second. Same class of bug, one file over.
+
+They are not one thing, and unifying their values would have introduced a bug. The connector's
+wait happens **inside a leased task**; the queue's happens between attempts while the row is
+`pending`. The queue ladder totals **630s against the documented 300s lease** — a connector
+using it would hold its lease 10.5 minutes, `claim_tasks` would reap the row mid-sleep, and a
+second worker would ingest the same source. That is a correctness constraint, not a
+preference, so I did not ask: I kept the connector at 2s/4s/8s, named both ladders for their
+context in `src/lib/backoff.ts`, and put an **import-time guard** on it. Proven both ways —
+perturbing the ladder to 1.4M ms makes the module throw with the totals in the message.
+
+### The `02a` corruption, and why U+FFFD count could not catch it
+
+Inserting a 35-line DDL block into `docs/02a-schema.md` produced **178 insertions / 108
+deletions**. The file is **not valid UTF-8**, and `readFileSync(f, "utf8")` decodes each
+invalid byte to U+FFFD on read — so writing it back replaced the original bytes with EF BF BD
+and re-normalised every other line.
+
+The instructive part is what made it hard to spot. `docs/06-work-breakdown.md` also has 30
+U+FFFD, and its U+FFFD count looked equally alarming — but it is **valid** UTF-8 with
+replacement characters already baked in by an earlier lossy save, so a normal utf8 edit there
+is lossless. The only reliable test is the round trip:
+
+```
+Buffer.from(bytes.toString("utf8"), "utf8").equals(bytes)   // false for 02a, true for 06
+```
+
+Recovered with `git checkout`, re-applied byte-level through latin1 (a 1:1 byte↔codepoint map)
+with the inserted block pure ASCII, and asserted the prefix byte-identical. Now 02a is the
+only file in `docs/` that fails that check. Both facts are in `notes.md` as a hard rule with
+the command to run.
+
+### Two more self-inflicted losses, same session
+
+Worth recording because both looked like working scripts:
+
+1. A restore helper read a file into a PowerShell variable, the variable came back null, and
+   the "restore" wrote null — **zeroing `backoff.ts`**. `[System.Text.Encoding]` had failed to
+   resolve, which I did not check.
+2. A perturb-and-restore helper took its "original" snapshot **after** the mutation, so it
+   faithfully restored the broken value and reported success while doing it.
+
+Neither was caught by a test. The lesson is to assert a backup is non-empty before writing and
+never let a restore depend on a value read in the same breath as the mutation.
+
+### Also corrected
+
+`02b` §6.4's `2^n` formula (the lone outlier against three documents), its §6.4a conflict note,
+`03` §5.2, `04` §5.9's Firecrawl retry column, `06` BE-107 / BE-108 / FND-002, `05b`'s two
+"never executed" db-reset boxes and its "Docker Desktop is not installed" note, two migration
+counts (9 → 10), and `02a` §5.3's "~600 rows".
+
+### New: `02a` §5.8a documents `audit_logs`
+
+The table was in the ER diagram and in `0001_init.sql` but had **no DDL anywhere in `docs/`**,
+so its column names were undiscoverable. Both queue executors invented
+`entity_type`/`entity_id`/`detail`, and §6.4's audit requirement was unmet while looking met.
+A table whose columns are documented nowhere is a table nobody can write correctly. Column
+list transcribed from the live database rather than from memory.
+
+Gates: `typecheck exit=0` · `lint exit=0` · `777 passed | 41 skipped`, plus **41 passed**
+across the three integration files against the local stack.
