@@ -24,26 +24,37 @@
  * Node's built-in `--env-file` flag, wired into the `queue:drain` npm script. No dotenv
  * dependency — it was never in package.json.
  *
- * ## claim-primitive (known gap, FND-002)
+ * ## claim-primitive
  *
  * docs/02 §6.4 specifies `FOR UPDATE SKIP LOCKED`, which supabase-js cannot express — it
- * needs an RPC function that FND-002 must create in a migration. Until that exists this
- * uses a compare-and-swap: the update carries `.eq("status","pending")`, so only one
- * worker can win a given row. That preserves mutual exclusion per task but not
- * batch-claim atomicity. Recorded in docs/02 §6.4.
+ * needs an RPC. That RPC now exists: `public.claim_tasks(...)` in
+ * `supabase/migrations/0009_claim_task_queue.sql` (FND-002), which also reaps expired
+ * leases. `api/cron/process/route.ts` calls it.
  *
- * ## Not yet implemented (BE-108)
+ * This script still claims by compare-and-swap (`.eq("status","pending")` on the update),
+ * which preserves mutual exclusion per task but not batch-claim atomicity: two workers can
+ * read the same candidate list and both win on disjoint subsets. Switching to the RPC is
+ * the remaining BE-108 work for this executor — it is a local development convenience, and
+ * the specified primitive runs in production.
  *
- * Handler dispatch. `src/lib/queue/handlers/*` does not exist, so a claimed task cannot
- * be executed yet. Rather than mark it `done` — which silently discarded every task this
- * script claimed — it is released back to `pending` with an explanatory `last_error`,
- * leaving the row visible and retryable instead of falsely complete.
+ * ## Handler dispatch
+ *
+ * `src/lib/queue/dispatch.ts` (BE-108, 2026-10-09) owns kind → handler resolution, and it
+ * reports an unregistered kind as a *failure* naming the kind rather than marking the task
+ * `done`. This script previously marked every claimed task `done` without running anything,
+ * which silently discarded every task it claimed.
+ *
+ * No handler is currently runnable: `rescore_profile` needs a `RescoreStore` adapter that
+ * does not exist yet, and no other kind is registered. So tasks still fail here — but now
+ * they fail *legibly*, burning an attempt and eventually writing an `audit_logs` row, rather
+ * than disappearing.
  */
 
 import { createClient } from "@supabase/supabase-js";
 
 import { env } from "@/lib/env";
 import { LEASE_MS, LOCAL_WORKER_ID, MAX_BATCH } from "@/lib/queue/constants";
+import { dispatch } from "@/lib/queue/dispatch";
 import { needsAuditLog, planClaim, settleTask, type Outcome, type QueueTask } from "@/lib/queue/plan";
 
 // Validated by src/lib/env.ts, not by hand. Reading process.env directly here used to
@@ -148,12 +159,14 @@ async function main() {
 
     console.log(`[queue-drain] processing ${task.kind} (${task.id})`);
 
-    // BE-108 owns the handlers. Until they exist there is nothing to run, and the
-    // honest outcome is "not done" — see the header.
-    const outcome: Outcome = {
-      ok: false,
-      error: "no handler registered for this task kind (BE-108)",
-    };
+    // Resolution is dispatch.ts's job (BE-108), the same module the cron route uses. It
+    // returns a failed Outcome for an unregistered or unimplemented kind instead of `ok:
+    // true`, which is what stops an unrunnable task being marked done.
+    const outcome: Outcome = await dispatch(
+      { id: task.id, kind: task.kind, payload: {} },
+      now,
+      new AbortController().signal,
+    );
 
     await settle(supabase, task, outcome, now);
   }

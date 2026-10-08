@@ -1509,3 +1509,116 @@ To run it: install Docker Desktop, `pnpm db:reset`, then set `TEST_SUPABASE_URL`
 `TEST_SUPABASE_SERVICE_ROLE` to the local values.
 
 Gates for what did run: `typecheck exit=0` · `lint exit=0` · `726 passed | 19 skipped`.
+
+---
+
+## 2026-10-09 — BE-108, BE-109, BE-111: the queue's three missing halves
+
+Three tickets in one pass, because they chain: cron enqueues, workers claim, runs are recorded.
+All three are policy rather than machinery, which is why each is a pure module with a thin
+executor on top.
+
+**What already existed** (the third time this session the docs understated the build):
+`plan.ts` had the entire queue protocol as pure decisions, `constants.ts` had the numbers,
+`0009` had the `FOR UPDATE SKIP LOCKED` RPC, and `handlers/rescore-profile.ts` had a handler.
+So none of these tickets was about the rules. They were about the executors and the registry.
+
+### The bug BE-108 actually fixed
+
+`scripts/queue-drain.ts` settled every claimed task `done` **without running a handler** — it
+wrote a hardcoded failure but the settle path had already been reached, and more to the point
+the header said handlers "do not exist" while `rescore-profile.ts` sat right there. Every task
+the drain claimed was silently discarded.
+
+`dispatch.ts` now resolves kind → handler, and an unregistered kind is a *failed* `Outcome`
+naming the kind. Two messages are kept deliberately apart:
+
+| Message | Points at |
+|---|---|
+| `no handler registered for task kind "x"` | the registry |
+| `handler is not yet wired to a RescoreStore` | the missing store adapter |
+
+Collapsing them sends the reader to the wrong file. A test asserts they stay distinct — and
+that test caught me: my first version used a payload with no `profile_id`, so it hit the
+*payload* error and I had written the assertion against the wrong message.
+
+### BE-109 — why the secret is hashed before comparison
+
+`CRON_SECRET` is compared as SHA-256 digests through `timingSafeEqual`, not as raw strings.
+Two reasons, and the second is the one that bit before:
+
+1. `timingSafeEqual` **throws** on a length mismatch, so comparing raw values leaks the
+   expected secret's length through that throw.
+2. A `===` returns early on the first differing byte — exactly the timing side channel
+   ING-009 forbids.
+
+Hashing first gives two fixed 32-byte buffers, so a 10-byte guess and a 500-byte guess take
+the identical path. Tested explicitly, because "any length behaves the same" is exactly the
+property a future refactor to `===` would silently destroy.
+
+Also: the 401 body is identical for "missing" and "invalid", so the route is not an oracle for
+whether a guess was well-formed.
+
+### The enqueue planner, and "exactly once per cycle"
+
+`planEnqueue` is pure and snapshots the candidate set **before any write**. That is what makes
+once-per-source structural rather than incidental — an implementation that re-reads
+`next_run_at` per row can double-enqueue a source whose value a trigger advanced mid-cycle.
+
+Two decisions the docs did not settle:
+
+- **`next_run_at` advances from the previous due time, not from `now`.** Advancing from `now`
+  makes a backlog permanent: a source down for a day gets "now + 6h" every cycle and never
+  accumulates catch-up. Anchored to the prior due time it converges, and `catchUp` reports the
+  shortfall.
+- **A non-positive `cadence_minutes` is skipped, not defaulted.** It would produce a
+  `next_run_at` that never advances, so the source re-enqueues every cycle forever.
+
+### BE-111 — `partial` before `success`
+
+`runStatusFor` checks `partial` first. A run that fetched 200 and failed to parse 3 is neither
+a success nor a failure, and checking `success` first would report the 197 and hide the 3.
+
+Judgement call: **zero postings with no error is `failed`, not `success`.** An empty ATS board
+is indistinguishable from a working one from the outside, so "found nothing" is a broken
+integration. A source with legitimately zero new listings gets flagged — reversible once real
+cadence data exists, and the reasoning is in the docstring.
+
+### An unresolved spec conflict — flagged, not decided
+
+`docs/02b` §6.4 specifies backoff as `2^n` seconds (first failure waits **2s**).
+`docs/05b` ING-008 specifies **30s / 2m / 8m**. Both are current and they disagree.
+
+`plan.ts` implements `2^n` and argues the post-increment reading is deliberate, so the
+implemented behaviour follows §6.4 and **the 05b figures are not satisfied.** Retrying a
+transient upstream failure after 2 seconds is aggressive, and for metered APIs a retry is a
+billed call — 30s is the more defensible number. Not changed unilaterally: `plan.ts` is shared
+by both executors, so altering the curve is a protocol change, not a ticket detail. Recorded in
+02b §6.4a, 05b ING-008 and `docs/06`. **Needs a decision.**
+
+### Guards proven in both directions
+
+| Perturbation | Result |
+|---|---|
+| `if (false)` in place of the `timingSafeEqual` check | 3 auth tests red |
+| `if (false)` in place of the cadence guard | 2 enqueue tests red |
+| real target | 38 green |
+
+### Honest state of the three tickets
+
+None is complete, and none is claimed to be:
+
+- **BE-108** — no handler is *runnable*. Tasks now fail legibly instead of vanishing, which is
+  the improvement, but the queue cannot do useful work yet.
+- **BE-109** — `pg_cron` was deliberately not created on this project, so the scheduler is
+  Vercel dashboard config; `/api/cron/digest` is still a `.gitkeep`; **no route has been
+  executed against a live project.**
+- **BE-111** — accounting functions exist, **nothing calls them.** No `scrape_source` handler
+  means no run starts and no `scrape_runs` row is ever written.
+
+Also stale and fixed: `queue-drain.ts`'s header claimed the claim RPC was missing (it landed in
+`0009`) and that handlers did not exist (one did). Both were load-bearing lies to the next
+reader. It now calls `dispatch`, and its remaining compare-and-swap claim is documented as the
+open item rather than as a spec.
+
+Gates: `typecheck exit=0` · `lint exit=0` · `764 passed | 19 skipped` (+38).

@@ -191,6 +191,55 @@ Two consequences worth stating, because both were bugs once:
   would make one column carry two clocks. `n` in `2^n` is the **post-increment** value, so
   the first failure waits `2^1 = 2s`.
 
+**Where handler resolution lives (BE-108, 2026-10-09).** `src/lib/queue/dispatch.ts` maps
+`task_kind` → handler. It exists because the executors were resolving handlers themselves and
+the drain script had settled every claimed task `done` **without running anything** — silently
+discarding every task it claimed. An unregistered kind is now a *failed* `Outcome` naming the
+kind, so the task re-queues, burns an attempt, and lands in `audit_logs` pointing at what is
+missing. A missing handler is a visible queue problem, not a job that quietly never runs.
+
+**Nothing is runnable yet.** `rescore_profile` is registered but needs a `RescoreStore` adapter
+over the real client, and no other kind is registered. Two distinct messages are kept apart on
+purpose — "no handler registered" points at the registry, "not yet wired" points at the missing
+store — because collapsing them sends the reader to the wrong file.
+
+### 6.4a Cron ingress (BE-109, 2026-10-09)
+
+`/api/cron/enqueue` is the producer, `/api/cron/process` the consumer. They are separate
+because enqueueing is cheap and idempotent while processing is expensive; a producer that also
+drained would make run duration depend on how much work happened to be pending.
+
+- **Auth** — `src/lib/cron/auth.ts`. `CRON_SECRET` compared as **SHA-256 digests** via
+  `timingSafeEqual`, not as raw strings: `timingSafeEqual` throws on a length mismatch, so
+  comparing raw values would leak the expected length through that throw, and a `===`
+  comparison returns early on the first differing byte — the timing side channel ING-009
+  forbids. Hashing first gives two fixed-length buffers, so a 10-byte guess and a 500-byte
+  guess take the same path. The 401 body is identical for "missing" and "invalid" so the route
+  is not an oracle for whether a guess was well-formed.
+- **Which sources** — `src/lib/cron/plan-enqueue.ts`, pure. "Exactly once per cycle" is only
+  *provable* when the candidate set is snapshotted before any write; an implementation that
+  re-reads `next_run_at` per row can double-enqueue a source whose value a trigger advanced
+  mid-cycle. Every source yields exactly one entry — enqueued or skipped with a reason — so a
+  source that did not run is explainable.
+- **Cadence advances from the previous due time, not from `now`.** Advancing from `now` makes
+  a backlog permanent: a source down for a day would get its next slot set to "now + 6h" every
+  cycle and never accumulate catch-up. Anchored to the prior due time it converges, and
+  `catchUp` reports how far behind it was.
+- **Per-source isolation** (ING-009) — each source's writes settle independently. A batch-wide
+  transaction would let one bad row discard the whole cycle, which is the opposite of the
+  requirement.
+- **Not scheduled.** The Vercel Cron entries themselves are dashboard configuration, and
+  `pg_cron` was deliberately not created on this project (see `docs/07`). `/api/cron/digest`
+  remains a `.gitkeep`.
+
+**A spec conflict, unresolved.** §6.4 above specifies backoff as `2^n` seconds, so the first
+failure waits 2s. `docs/05b` ING-008 specifies "30s / 2m / 8m". `plan.ts` implements `2^n`
+and its own docstring argues the post-increment reading is deliberate, so **the implemented
+behaviour follows §6.4 and the 05b figures are not satisfied.** Retrying a transient upstream
+failure after 2 seconds is aggressive; 30s is the more defensible number for metered APIs where
+a retry is a billed call. Not changed unilaterally — `plan.ts` is shared by both executors, so
+altering the curve is a protocol change, not a ticket detail. **Needs a decision.**
+
 **Where the claim is implemented (FND-002, 2026-10-06).** `FOR UPDATE SKIP LOCKED` cannot be
 expressed through `supabase-js` — its query builder composes select/update calls and has no
 way to attach either clause to a read — so the only way to get the specified primitive is an

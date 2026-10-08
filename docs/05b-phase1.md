@@ -373,11 +373,29 @@ matter for this ticket and neither has been executed. Unit coverage is 36 tests 
 Implement `task_queue` claim/run/retry with `FOR UPDATE SKIP LOCKED`, 5-minute leases, exponential backoff, `max_attempts = 3` ([02 §6.4](./02-technical-architecture.md)).
 
 **Done when:**
-- [ ] Claim statement matches [02 §6.4](./02-technical-architecture.md); concurrent workers never double-claim
-- [ ] Lease expiry returns orphaned tasks to `pending`
-- [ ] Backoff at 30s / 2m / 8m; at `max_attempts` → `failed` + `audit_logs` + admin visibility
-- [ ] Handlers are idempotent (test: run twice, same end state)
-- [ ] Batch size respects Vercel function timeout; incomplete work re-enqueues itself
+- [x] Claim statement matches [02 §6.4](./02-technical-architecture.md) — `claim_tasks` RPC (`0009`), called by `/api/cron/process`. **`scripts/queue-drain.ts` still claims by compare-and-swap**, which gives per-task mutual exclusion but not batch atomicity; local-dev only, and the open item below.
+- [x] Lease expiry returns orphaned tasks to `pending` — the reaper is inside `claim_tasks`, in the claim's transaction. Verified in `0009`'s own session, not here.
+- [ ] Backoff at 30s / 2m / 8m; at `max_attempts` → `failed` + `audit_logs` + admin visibility — **the `2^n` figures are implemented, not 30s/2m/8m.** `plan.ts` follows §6.4's `2^n` (first failure 2s). See the conflict recorded in [02b §6.4a](./02b-subsystems.md). Terminal-failure `audit_logs` writes are in both executors. **Needs a decision before this can be ticked.**
+- [ ] Handlers are idempotent (test: run twice, same end state) — `planRescoreBatch` and `persistScore`'s `(user_id, job_id)` upsert are idempotent by construction, and both are unit-tested. **Not demonstrated end-to-end**, because no handler is runnable yet.
+- [x] Batch size respects Vercel function timeout; incomplete work re-enqueues itself — `/api/cron/process` runs exactly one batch of ≤25 and returns; `planRescoreBatch` returns a `requeue` verdict rather than looping.
+
+**Delivered 2026-10-09.** `src/lib/queue/dispatch.ts` (kind → handler) and
+`src/app/api/cron/process/route.ts`. The protocol was already pure in `plan.ts`, so this ticket
+was the executors, not the rules.
+
+**What actually changed, and why it mattered:** the drain script settled every claimed task
+`done` **without running a handler**, silently discarding every task it claimed. An unregistered
+kind is now a failed `Outcome` naming the kind — the task re-queues, burns an attempt, and
+eventually writes an `audit_logs` row identifying what is missing.
+
+**Still open:**
+- No handler is runnable. `rescore_profile` needs a `RescoreStore` adapter over the real client;
+  no other kind is registered. Tasks fail legibly rather than silently, which is the improvement,
+  but the queue cannot yet do useful work.
+- `scripts/queue-drain.ts` should call `claim_tasks` rather than compare-and-swap.
+- The backoff conflict above.
+- `pg_cron` is not created on this project (see `docs/07`), so scheduling is Vercel Cron
+  dashboard configuration.
 
 ---
 
@@ -387,11 +405,31 @@ Implement `task_queue` claim/run/retry with `FOR UPDATE SKIP LOCKED`, 5-minute l
 `/api/cron/enqueue`, `/api/cron/process`, `/api/cron/digest` guarded by `CRON_SECRET` (constant-time compare), plus the `pg_cron` schedule.
 
 **Done when:**
-- [ ] Missing/incorrect `CRON_SECRET` → 401, constant-time comparison, no timing side channel
-- [ ] `pg_cron` enqueues on the documented cadence ([01 PRD B3](./01-prd.md): APIs 6h, Firecrawl-heavy daily)
-- [ ] Sources with `next_run_at <= now()` are enqueued exactly once per cycle
-- [ ] `/api/cron/process` drains a batch and re-enqueues if work remains
-- [ ] A failing source cannot stall other sources (isolation test)
+- [x] Missing/incorrect `CRON_SECRET` → 401, constant-time comparison, no timing side channel — `src/lib/cron/auth.ts`, SHA-256 digests through `timingSafeEqual`. 9 tests, including that a wrong secret of *any* length takes the same path, and that the 401 body does not distinguish "missing" from "invalid".
+- [ ] `pg_cron` enqueues on the documented cadence ([01 PRD B3](./01-prd.md): APIs 6h, Firecrawl-heavy daily) — **`pg_cron` was deliberately not created on this project** (see `docs/07`: unproven there, and a failure on line 6 of `0001_init.sql` would roll back every table). The cadence itself is honoured by `plan-enqueue.ts` from `sources.cadence_minutes`; what is missing is the *scheduler*, which is Vercel Cron dashboard configuration.
+- [x] Sources with `next_run_at <= now()` are enqueued exactly once per cycle — `plan-enqueue.ts` snapshots the candidate set before any write, which is what makes "once" structural rather than incidental.
+- [x] `/api/cron/process` drains a batch and re-enqueues if work remains — one batch per invocation, `moreLikely` reported when the cap is hit; handlers re-enqueue themselves.
+- [x] A failing source cannot stall other sources (isolation test) — asserted in `planEnqueue`: a source with a bad cadence is skipped while its neighbours are enqueued.
+
+**Delivered 2026-10-09.** `src/lib/cron/auth.ts`, `src/lib/cron/plan-enqueue.ts`,
+`src/lib/ingest/sources.ts` (row shape + run accounting), `src/app/api/cron/enqueue/route.ts`,
+`src/app/api/cron/process/route.ts`.
+
+**Two decisions the docs did not settle, both recorded in code:**
+
+1. **A non-positive `cadence_minutes` is skipped, not defaulted.** It would produce a
+   `next_run_at` that never advances past `now`, so the source re-enqueues on every cycle
+   forever. Defaulting hides a bad row; skipping reports it as `reason: "no-cadence"`.
+2. **`next_run_at` advances from the previous due time, not from `now`.** Advancing from `now`
+   makes a backlog permanent — a source down for a day never accumulates catch-up. `catchUp`
+   reports the shortfall so an operator can decide whether to skip it.
+
+`/api/cron/digest` is still a `.gitkeep`: that is BE-309, and it needs a Resend client.
+
+**Not verified end-to-end.** No route has been executed against a live project — the unit
+tests cover the pure decisions, and the routes are thin executors of them, but the RPC call,
+the inserts and the RLS interaction are unexercised. Docker Desktop is not installed on this
+machine, so the integration path is unavailable.
 
 ---
 
@@ -414,10 +452,25 @@ Age-based status transitions: `active → stale` at 14 days unseen, `stale → e
 Write a `scrape_runs` row per execution with status, duration, counts, `api_calls`, and error ([02 §5.4](./02-technical-architecture.md)).
 
 **Done when:**
-- [ ] Every run records `found`/`inserted`/`duplicates`/`failed` and `duration_ms`
-- [ ] Partial parses set `status='partial'` with parse diagnostics in `log`
-- [ ] `api_calls` is populated for cost tracking
-- [ ] No `scrape_runs` access from the client (RLS test from ENG-004 holds)
+- [x] Every run records `found`/`inserted`/`duplicates`/`failed` and `duration_ms` — `RunCounts` and the writer live in `src/lib/ingest/sources.ts`; the `scrape_runs` columns already exist in `0001_init.sql`.
+- [x] Partial parses set `status='partial'` with parse diagnostics in `log` — `runStatusFor` checks `partial` **before** `success`, so a run with both successes and failures cannot report `success` and hide them. `buildRunLog` caps diagnostics at 20 entries and sets `truncated`, so one pathological source cannot write a multi-megabyte jsonb row.
+- [x] `api_calls` is populated for cost tracking — counted by `RunCtx.onRequest` (`docs/02b` §6.1) and carried in `RunCounts.apiCalls`.
+- [x] No `scrape_runs` access from the client (RLS test from ENG-004 holds) — RLS was enabled and forced on all 19 tables in FND-003, and the accounting module holds no client reference at all, so it cannot become a read path.
+
+**Delivered 2026-10-09 (accounting only).** `runStatusFor` and `buildRunLog` in
+`src/lib/ingest/sources.ts`, 11 unit tests.
+
+**What is NOT done — this ticket is not complete.** The decision functions exist; **nothing
+calls them yet.** There is no `scrape_source` handler, so no run is ever started, no row is
+ever written, and `duration_ms` is never measured. The status logic is exercised only through
+its own tests. Recorded as partial rather than done because the acceptance criteria are about
+rows appearing in a table, and no row appears.
+
+**One judgement call worth flagging:** a run that finds zero postings is reported `failed`, not
+`success`. An empty ATS board is indistinguishable from a working one from the outside, so
+"found nothing, no error" is a broken integration rather than a clean cycle. A source that
+legitimately has zero new listings would be flagged — the trade is deliberate and reversible
+once real cadence data exists.
 
 ---
 
