@@ -183,6 +183,43 @@ describe("normaliseJob", () => {
     expect(job.salary?.currency).toBe("INR");
   });
 
+  // BE-106 wiring. `jobs.skills` is documented as canonical slugs, so `normaliseJob` matches
+  // them out of the posting text rather than passing the connector's free text through. This
+  // fixture's `skills` deliberately contains one canonical slug and one that is not in the
+  // vocabulary: if the matcher is bypassed, the array comes back verbatim and both assertions
+  // below fail. A test on `matchSkills` alone would not catch that — the wiring is the part
+  // that can silently regress.
+  it("populates skills from the posting text, not the connector's raw skills", () => {
+    const raw: RawJob = {
+      externalId: "job-skills",
+      sourceUrl: "https://example.com/job/skills",
+      applyUrl: null,
+      companyName: "Acme Corp",
+      companyDomain: "acme.com",
+      title: "Senior TypeScript Engineer",
+      descriptionText: "You will work with PostgreSQL and Kubernetes.",
+      descriptionHtml: null,
+      locationRaw: "Remote",
+      workMode: "remote",
+      employmentType: "full_time",
+      seniority: "senior",
+      salaryRaw: null,
+      salaryMin: null,
+      salaryMax: null,
+      salaryCurrency: null,
+      salaryPeriod: null,
+      skills: ["JavaScript", "TypeScript"],
+      postedAt: null,
+      raw: null,
+    };
+
+    const job = normaliseJob(raw);
+
+    expect(job.skills).toEqual(["kubernetes", "postgresql", "typescript"]);
+    // "JavaScript" is not in the canonical vocabulary, so it must not reach the column.
+    expect(job.skills).not.toContain("JavaScript");
+  });
+
   it("normalises a global remote job", () => {
     const raw: RawJob = {
       externalId: "job-456",

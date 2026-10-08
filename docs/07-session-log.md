@@ -1396,3 +1396,52 @@ reverting also lost the intended appends — which is why this note needed resto
 This is now **Rule 5** in AGENTS.md plus a `notes.md` hard rule: review the diff before *every*
 push and check the line counts against the change. A docs append is roughly additive; a large delete
 ratio means the file was rewritten, not edited.
+---
+
+## 2026-10-09 — Phase 1 audit, and the first ticket against the code rather than the table
+
+Started from `Is Phase 1 done?` and `Complete phase 1`. The first finding is that
+`docs/06` §4's status column cannot be used to plan Phase 1. It listed `BE-106` as not
+started; `src/lib/ingest/normalize.ts` already exported all five functions it asks for, and
+`0001_init.sql` already creates `dedupe_hash text not null unique`, `job_events`,
+`move_application()`, `saved_searches`, `digests`, `subscriptions` and
+`v_ranked_jobs`. Real remaining count is ~15 tickets, not the 27 the table implies.
+
+Baseline before any edit: `typecheck exit=0` · `lint exit=0` · `671 passed | 14 skipped`.
+
+### BE-106 — the skill matcher
+
+The one genuine gap. `normalize.ts:401` read `skills: raw.skills`, a pass-through of each
+connector's free text, so the column documented as canonical slugs was empty for providers
+that send none and held non-slugs for the rest. `src/lib/ingest/skills.ts` matches title and
+description against a mirror of the `supabase/seed.sql` vocabulary.
+
+**The trap: a seed alias is not automatically a safe pattern.** `next` is an alias of
+`nextjs` and an ordinary English word, so `\bnext\b` tags "the next step" as Next.js across
+a large share of the corpus — and reports nothing, because there is no error path for a
+skill that should not be there. Dropped from the patterns; `next.js` and `nextjs` carry it.
+The same audit was run on every short alias: `py` is safe (`\bpy\b` cannot match inside
+`pytorch` or `k8s`), `ts` is safe for the same reason.
+
+Both guards proven in both directions rather than only passing:
+
+| Perturbation | Result |
+|---|---|
+| added `('Rust','rust',…)` to `supabase/seed.sql` | drift guard red: "seeds skills the matcher cannot produce: rust" |
+| reverted `normalize.ts:401` to `raw.skills` | wiring test red |
+| real target | 20 matcher tests + wiring test green |
+
+The wiring test matters separately from the matcher tests: `matchSkills` can be perfect
+while `normaliseJob` stops calling it, and only a test on `normaliseJob` sees that.
+
+Gates after: `typecheck exit=0` · `lint exit=0` · `690 passed | 14 skipped`.
+
+### Two things left untouched, deliberately
+
+- **`description_html` is still discarded** (`normalize.ts:383`). 02b §6.6 records the
+  sanitiser as a deliberate gap; closing it needs a sanitiser dependency, which is an
+  ask-first decision, so the doc now says so next to the skills fix rather than beside it.
+- **`docs/06` carries 30 U+FFFD replacement characters at HEAD** — real mojibake from an
+  earlier PowerShell round-trip, visible as `R?sum?` in the ticket titles. Confirmed
+  pre-existing by comparing HEAD's blob bytes to the working copy: 30 before, 30 after. A fix
+  is a large diff in a tracked doc, so it is raised, not done unasked.

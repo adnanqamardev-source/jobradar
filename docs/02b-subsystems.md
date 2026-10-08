@@ -210,6 +210,23 @@ two of its rules are easy to get wrong and expensive to get wrong quietly: the I
 notation and the India-vs-worldwide remote distinction. `src/lib/ingest/normalize.ts`; every
 function is pure and deterministic.
 
+**Closed 2026-10-09 — `skills` is populated; `description_html` is still open.** `normaliseJob`
+wrote `skills: raw.skills`, a pass-through of whatever free text each connector sent, so the
+canonical-slug column was empty for providers that send no skills and held non-slugs for the
+rest. `src/lib/ingest/skills.ts` now matches the posting's title and description against a
+mirror of the `supabase/seed.sql` vocabulary. Two rules that are easy to get wrong:
+
+1. **A seed alias is not automatically a safe pattern.** `next` is an alias of `nextjs` and an
+   ordinary English word; `\bnext\b` matches "the next step" in a large share of descriptions
+   and silently tags them as Next.js. The dotted and squashed spellings carry the match
+   instead. The same audit applies to every short alias — `py` is kept, because `\bpy\b`
+   cannot match inside `pytorch` or `k8s`, but it had to be checked rather than assumed.
+2. **The vocabulary is mirrored, so a guard must keep it honest.**
+   `tests/unit/ingest-skills.test.ts` parses `supabase/seed.sql` and fails if the matcher
+   cannot produce a seeded slug, invents an unseeded one, or misses a seeded alias. Adding a
+   skill to the database without teaching the matcher about it is a red test, not a silent
+   miss. The guard is proven in both directions.
+
 **Open gap — `description_html` is still discarded (found 2026-10-06).** `normalize.ts` writes
 `descriptionHtml: null` with the comment "Would be populated by HTML sanitiser", so the
 `jobs.description_html` column (02a §5.4) stays NULL for the whole corpus. The sanitiser does not

@@ -12,6 +12,8 @@
 
 import type { RawJob, CanonicalJob, RemoteScope } from "@/types/canonical-job";
 
+import { matchSkills } from "@/lib/ingest/skills";
+
 // ---------------------------------------------------------------------------
 // Remote scope detection (BE-317)
 // ---------------------------------------------------------------------------
@@ -398,7 +400,12 @@ export function normaliseJob(raw: RawJob): CanonicalJob {
       period: salary.period,
       raw: raw.salaryRaw ?? null,
     },
-    skills: raw.skills,
+    // BE-106: the column is documented as canonical slugs, so the connector's free-text
+    // `raw.skills` is not carried through — providers disagree on spelling and several send
+    // none at all. Provider-specific taxonomy has no home in this schema (both `jobs.skills`
+    // and `job_skills` reference the canonical vocabulary), so it is dropped rather than
+    // written as if it were a slug.
+    skills: matchSkills(raw.title, raw.descriptionText),
     postedAt: raw.postedAt ?? null,
     firstSeenAt: null, // Set by dedupe pipeline
     lastSeenAt: null, // Set by dedupe pipeline
