@@ -130,6 +130,24 @@ Three deliberate choices the code depends on:
 
 Same job from three sources = **one** feed card, with a "seen on N sources" chip (D5).
 
+**Implemented 2026-10-09** (`src/lib/ingest/dedupe.ts`), with three points where the code
+departs from a literal reading of the two rules above. All three are consequences of the
+schema rather than preferences:
+
+1. **`norm_company_domain` falls back to the company name** when the source sends no domain.
+   Left as `null`, every same-titled role in the same city at *any* domain-less employer would
+   hash identically. The fallback is never the *provider* name — §6.1 above records why.
+2. **Pass 2's similarity runs in TypeScript.** PostgREST exposes no `similarity()` without an
+   RPC, so candidates are narrowed by the indexed `company_domain` equality and the Dice
+   coefficient is evaluated client-side. The two GIN trigram indexes (`0001_init.sql:275-276`)
+   are therefore **unused by this pass** — the honest cost of avoiding a migration.
+3. **At 0.85 the threshold is strict.** A plural `s` scores 0.8333, so the pass absorbs
+   whitespace and casing drift and little else.
+
+The fuzzy pass is specified to run on newly inserted rows only. That ordering is load-bearing:
+re-running it per sighting would let a near-miss title creep toward a neighbouring row on each
+pass, and `sighting_count` would stop tracking real sightings.
+
 ### 6.3 Scoring pipeline
 
 ```

@@ -329,11 +329,41 @@ Implement `firecrawl.ts` using `/scrape` (JSON-schema extraction), `/search`, an
 Two-pass dedupe per [02 §6.2](./02-technical-architecture.md): exact `dedupe_hash` upsert + trigram fuzzy merge.
 
 **Done when:**
-- [ ] Hash = `sha256(norm_title | norm_company_domain | norm_city | work_mode)` with legal suffixes stripped
-- [ ] `on conflict (dedupe_hash)` updates `last_seen_at` and increments `sighting_count`, **does not** duplicate
-- [ ] Fuzzy pass merges `similarity > 0.85` + matching domain, keeping the richer description
-- [ ] Test: the same posting from 3 sources yields **one** `jobs` row with `sighting_count = 3`
-- [ ] Test: two genuinely different roles at the same company are **not** merged
+- [x] Hash = `sha256(norm_title | norm_company_domain | norm_city | work_mode)` with legal suffixes stripped
+- [x] `on conflict (dedupe_hash)` updates `last_seen_at` and increments `sighting_count`, **does not** duplicate
+- [x] Fuzzy pass merges `similarity > 0.85` + matching domain, keeping the richer description
+- [ ] Test: the same posting from 3 sources yields **one** `jobs` row with `sighting_count = 3` — **written, NOT RUN.** `tests/integration/dedupe.db.test.ts` asserts exactly this, but Docker Desktop is no longer installed on this machine, so no local Postgres and the file skips. Unverified until someone runs it with `TEST_SUPABASE_URL` set.
+- [x] Test: two genuinely different roles at the same company are **not** merged — unit level (below threshold, so no merge candidate) and at DB level in the same skipped file
+
+**Delivered 2026-10-09.** `src/lib/ingest/dedupe.ts`. No migration needed: `dedupe_hash text not null unique`, `pg_trgm`, and both GIN trigram indexes already exist (`0001_init.sql:275-276`).
+
+Three decisions the docs did not settle, each recorded in the module docstring:
+
+1. **Company identity falls back to the name when there is no domain.** §6.2 specifies
+   `norm_company_domain`, but many sources send none — and a `null` domain would make every
+   same-titled, same-city role at *any* domain-less employer hash identically. It is never the
+   *provider* name: `docs/02b` §6.1 records that Ashby and Lever send no company field, so
+   falling back to `cfg.name` would attribute every posting to the provider.
+2. **Trigram similarity is computed in TypeScript, not SQL.** PostgREST cannot call
+   `similarity()` without an RPC in the exposed schema, and that is a migration. So the
+   candidate set is narrowed by an indexed `company_domain` equality and the Dice coefficient
+   is evaluated client-side. Faithful to `pg_trgm` defaults (two-space pad, multiset
+   intersection), and it makes the 0.85 threshold testable without a database.
+   **Consequence: the two GIN trigram indexes are unused by this pass.** If the per-company
+   candidate set grows large enough to matter, the fix is one SQL function — open item, not
+   done.
+3. **At 0.85 the fuzzy pass only absorbs near-identical titles.** A plural `s` scores 0.8333
+   and a roman-numeral suffix 0.7778, so both stay separate rows. That is the specified
+   threshold behaving as written, but it means this pass is a safety net for whitespace and
+   casing drift, **not** a synonym matcher. Useful to know before reading a "did not merge"
+   report as a bug.
+
+`company-slug.ts` is reused rather than reimplemented — its docstring already reserved
+`stripLegalSuffix: true` for exactly this caller.
+
+**State of the ticket: NOT complete.** The two DB-level acceptance tests are the ones that
+matter for this ticket and neither has been executed. Unit coverage is 36 tests and green;
+`notes.md`'s "a gate that was never executed is not a pass" applies to the integration file.
 
 ---
 

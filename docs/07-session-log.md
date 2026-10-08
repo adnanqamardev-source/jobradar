@@ -1445,3 +1445,67 @@ Gates after: `typecheck exit=0` · `lint exit=0` · `690 passed | 14 skipped`.
   earlier PowerShell round-trip, visible as `R?sum?` in the ticket titles. Confirmed
   pre-existing by comparing HEAD's blob bytes to the working copy: 30 before, 30 after. A fix
   is a large diff in a tracked doc, so it is raised, not done unasked.
+
+---
+
+## 2026-10-09 — BE-107 dedupe, and a gate that could not be run
+
+`src/lib/ingest/dedupe.ts`. No migration was needed: `dedupe_hash text not null unique`,
+`pg_trgm`, and both GIN trigram indexes are already in `0001_init.sql`. That is the second
+ticket this session where `docs/06`'s status column overstated the work and the schema
+understated it.
+
+### Three places the code departs from a literal reading of 02b 6.2
+
+1. **`norm_company_domain` falls back to the company name.** Many connectors send no domain,
+   and a `null` component makes every same-titled, same-city role at *any* domain-less
+   employer hash alike. Never the *provider* name — `docs/02b` §6.1 records that Ashby and
+   Lever return no company field, so a `cfg.name` fallback attributes the whole feed to the
+   provider.
+2. **Trigram similarity runs in TypeScript.** PostgREST exposes no `similarity()` without an
+   RPC function, and that is a migration. Candidates are narrowed by the indexed
+   `company_domain` equality and the Dice coefficient is evaluated client-side. The cost is
+   stated in the module docstring rather than buried: **the two GIN trigram indexes are unused
+   by this pass.**
+3. **The 0.85 threshold is strict in practice.** `"engineers"` vs `"engineer"` scores 0.8333,
+   a roman-numeral suffix 0.7778. So the fuzzy pass absorbs whitespace and casing drift and
+   little else. Asserted as a test with that reasoning attached, because "the fuzzy pass did
+   not merge these" is otherwise indistinguishable from a bug.
+
+### Five failures on first run — all five were my test bugs, not the code
+
+Worth recording because four of them were me asserting something untrue about the algorithm:
+
+| Failure | Reality |
+|---|---|
+| expected `abc` not to be `abc` | Inverted. "AB" at "C Corp" and "A" at "BC Corp" *do* concatenate to the same string — that is exactly why the `\|` separator exists. The assertion now shows the collision **and** that the hashes differ. |
+| expected `acme.com`, got `acme com` | The dot is stripped by `normaliseToken`, like all punctuation. |
+| expected trigram `"  a"` twice in `"aaaa"` | The repeating trigram is `"aaa"`. |
+| expected similarity 0, got 0.0256 | Padding means any two strings ending in the same letter share a boundary trigram (`"r  "`). Real floor artifact, now asserted as `> 0 && < 0.1`. |
+| expected a plural title to merge | 0.8333 is *below* 0.85. This became the threshold test above. |
+
+The first one is the useful kind of failure: the test was wrong in a way that pointed at a
+real property of the design, so it now documents the separator instead of asserting against it.
+
+### The part I could not verify
+
+`tests/integration/dedupe.db.test.ts` holds the two acceptance tests that actually decide this
+ticket — three sources collapsing to one row with `sighting_count = 3`, and two different roles
+staying separate. Both are statements about the `on conflict (dedupe_hash) do update` branch,
+which `upsertCanonicalJob` delegates entirely to Postgres.
+
+**They have never run.** Docker Desktop is no longer installed on this machine — the client
+shells out but `C:\Program Files\Docker` is empty and only the WSL `docker-desktop` distro
+remains — so `pnpm db:reset` cannot bring up a local stack and the file skips. `notes.md` is
+explicit that a gate never executed is not a pass, so `docs/05b-phase1.md` ING-007 and
+`docs/06` BE-107 both say **not verified** rather than done.
+
+A mocked writer cannot substitute: it *defines* the answer, so it would report one row for
+three inserts whether or not the unique index fires. This is the same reasoning that put
+`profile-mutations.db.test.ts` in the tree, and the three green defects in its header are the
+reason to believe it.
+
+To run it: install Docker Desktop, `pnpm db:reset`, then set `TEST_SUPABASE_URL` and
+`TEST_SUPABASE_SERVICE_ROLE` to the local values.
+
+Gates for what did run: `typecheck exit=0` · `lint exit=0` · `726 passed | 19 skipped`.
