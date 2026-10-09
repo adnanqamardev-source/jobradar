@@ -31,6 +31,29 @@ an accurate optimistic one.
 
 ---
 
+## Why it stops at tracking
+
+**This finds and ranks jobs. It does not apply to them.** That is a deliberate boundary, not an
+unfinished feature.
+
+Job applications that a machine submits are the reason recruiters have learned to distrust
+automated ones. A tool that fires off four hundred applications in your name makes you the
+sender of four hundred low-quality applications — to you, to the companies, and to everyone who
+later asks you about the ones that got no reply. It also destroys exactly the signal you need:
+which postings you would actually have taken.
+
+So the last human decision stays human. The tool does the part that is tedious and
+error-prone — fifteen sources, duplicates, dead links, salary normalisation, eligibility — and
+hands you a shortlist you can defend. Everything past "this looks worth your time" is yours.
+
+If you want the honest counterweight: this is a real cost. Manually reviewing a ranked shortlist
+takes time, and some of that time is what you would otherwise have spent on a broader, dumber
+sweep. The bet is that ten well-chosen applications beat two hundred scattered ones — which is a
+claim you are in a position to test, and which is the kind of thing the scoring weights in
+`docs/02b` exist to tune.
+
+---
+
 ## Quick start
 
 ```bash
@@ -80,7 +103,6 @@ pnpm dev                      # http://localhost:3000
 | Resume parsing | `src/lib/resume/` | PDF/DOCX extraction with regression tests |
 
 ## Testing approach
-
 39 unit suites under `tests/unit/`. The cases worth reading are the negative ones — a gate that
 excludes a job because data was missing fails invisibly, so the feed can disappear without an
 error ever being raised. `scoring-gates.test.ts` pins those cases explicitly.
