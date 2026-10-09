@@ -114,11 +114,29 @@ defined in those documents without updating them first.
 
 ## A note on how this was built
 
-This project was developed with AI coding assistance. I wrote the specifications, the
-architecture, the subsystem contracts, and the test strategy; the implementation was generated
-and reviewed by me.
+**To be precise about the split: I wrote the specification. AI wrote nearly all of the code.**
 
-The parts worth discussing are the architectural decisions — why scoring splits into hard gates
-plus a semantic score rather than one ranking function, why the queue is a Postgres table rather
-than a managed service, why the negative test cases matter more than the positive ones, and why
-doc-drift is enforced in CI. I'm happy to go into any of it.
+My contribution is the seven specification documents in `docs/`, the architecture decisions
+recorded in `docs/02*`, the subsystem contracts, the test strategy, and the review of what came
+back. I did not hand-write the implementation.
+
+Being clear about this matters more here than it usually would, because the specs are the part of
+this project that took the most thinking — and they are invisible in the source files. Someone
+opening `src/lib/connectors/` sees code. The reasoning behind *why there are fourteen connectors
+and what contract they share* is in `docs/02b`, and that is the part I actually did.
+
+That is what is worth discussing in detail:
+
+- **Why scoring splits into hard gates plus a semantic score** rather than one ranking function.
+  A job you are not eligible for should never reach a ranking stage, because to the ranking
+  function it looks identical to a job you merely ranked low.
+- **Why the queue is a Postgres table** rather than a managed queue service — one fewer paid
+  dependency, and the queue becomes queryable with the same tools as everything else.
+- **Why the negative test cases matter more than the positive ones.** A gate that excludes a job
+  because data was missing fails invisibly: the feed can go empty and no error is raised anywhere.
+  `scoring-gates.test.ts` pins those cases explicitly.
+- **Why doc drift is a CI failure.** When the specification is authoritative, a change that
+  contradicts it is a defect rather than a preference.
+
+Happy to go into any of these in depth, or to walk through how a decision was reached rather than
+only what it was.
