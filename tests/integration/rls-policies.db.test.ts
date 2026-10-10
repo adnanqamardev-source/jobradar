@@ -421,40 +421,108 @@ suite("RLS policies against a real Postgres", () => {
   // ---------------------------------------------------------------------------
 
   describe("admin-only tables", () => {
+    /**
+     * Prove RLS is doing the filtering, not the table being empty.
+     *
+     * The first version of these three tests seeded nothing and asserted zero rows. All
+     * three tables are empty on a fresh local stack, so "returns nothing to a normal user"
+     * was true whether or not the policy existed. It was not a theoretical concern: with
+     * `scrape_runs` emptied *and* RLS disabled (`relrowsecurity = f`), the test passed.
+     *
+     * `admin` is the service-role client, which bypasses RLS by design. If it cannot see the
+     * row, the fixture failed and `expect` below says so with a far more useful message than
+     * "expected 0, received 0" would.
+     */
+    async function expectInvisibleToNormalUser(
+      table: "task_queue" | "scrape_runs" | "audit_logs",
+      seed: () => Promise<void>,
+      label: string,
+    ): Promise<void> {
+      await seed();
+
+      const visible = await admin.from(table).select("id").limit(1);
+      expect(visible.error, `${table}: seeding for ${label} failed`).toBeNull();
+      expect(
+        visible.data,
+        `${table}: fixture inserted no row, so this test would pass vacuously`,
+      ).not.toHaveLength(0);
+
+      const user = await createUser(`${label}-viewer`);
+
+      const { data, error } = await user.client.from(table).select("id").limit(1);
+
+      expect(error, `${table}: a normal user should see no error, just no rows`).toBeNull();
+      expect(data, `${table}: must be invisible to a normal authenticated user`).toHaveLength(0);
+    }
+
     it("task_queue returns nothing for a normal authenticated user", async () => {
-      const user = await createUser("task-queue");
-
-      const { data, error } = await user.client
-        .from("task_queue")
-        .select("id")
-        .limit(1);
-
-      expect(error).toBeNull();
-      expect(data).toHaveLength(0);
+      await expectInvisibleToNormalUser(
+        "task_queue",
+        async () => {
+          const { error } = await admin.from("task_queue").insert({ kind: "score_jobs" });
+          expect(error, "task_queue: seed insert failed").toBeNull();
+        },
+        "task-queue",
+      );
     });
 
     it("scrape_runs returns nothing for a normal authenticated user", async () => {
-      const user = await createUser("scrape-runs");
+      await expectInvisibleToNormalUser(
+        "scrape_runs",
+        async () => {
+          // `scrape_runs.source_id` is NOT NULL and FKs sources, so the seed needs a real
+          // one. Read it rather than hardcoding a uuid.
+          const { data: source, error: sourceError } = await admin
+            .from("sources")
+            .select("id")
+            .limit(1)
+            .single();
+          expect(sourceError, "scrape_runs: no source row to attach the run to").toBeNull();
+          // `.single()` types `data` as nullable even when `error` is null, and the
+          // assertion above does not narrow it. A real guard, not a `!`.
+          if (source === null) throw new Error("scrape_runs: sources lookup returned no row");
 
-      const { data, error } = await user.client
-        .from("scrape_runs")
-        .select("id")
-        .limit(1);
-
-      expect(error).toBeNull();
-      expect(data).toHaveLength(0);
+          const { error } = await admin.from("scrape_runs").insert({
+            source_id: source.id,
+            status: "success",
+            started_at: new Date().toISOString(),
+          });
+          expect(error, "scrape_runs: seed insert failed").toBeNull();
+        },
+        "scrape-runs",
+      );
     });
 
     it("audit_logs returns nothing for a normal authenticated user", async () => {
-      const user = await createUser("audit-logs");
+      await expectInvisibleToNormalUser(
+        "audit_logs",
+        async () => {
+          // Column names per docs/02a §5.8a: target_type / target_id / meta. The
+          // `entity_type` / `entity_id` / `detail` names are the ones that never existed.
+          const { error } = await admin.from("audit_logs").insert({
+            action: "rls.it",
+            target_type: "test",
+            target_id: "rls-it",
+            meta: { note: "row so zero-rows means filtered, not empty" },
+          });
+          expect(error, "audit_logs: seed insert failed").toBeNull();
+        },
+        "audit-logs",
+      );
+    });
 
-      const { data, error } = await user.client
-        .from("audit_logs")
-        .select("id")
-        .limit(1);
-
-      expect(error).toBeNull();
-      expect(data).toHaveLength(0);
+    // A real row exists for the terminal-failure path in
+    // `api/cron/process/route.ts` to write. The insert there used to fail silently against
+    // non-existent column names, so this table having no fixture at all was not an
+    // oversight — it was a symptom.
+    it("audit_logs accepts the exact insert the queue's terminal-failure path performs", async () => {
+      const { error } = await admin.from("audit_logs").insert({
+        action: "queue.task_failed",
+        target_type: "task_queue",
+        target_id: "00000000-0000-0000-0000-000000000000",
+        meta: { kind: "scrape_source", attempts: 3, error: "boom" },
+      });
+      expect(error, "the queue's audit insert shape must be valid").toBeNull();
     });
   });
 

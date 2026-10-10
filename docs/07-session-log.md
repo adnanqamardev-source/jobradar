@@ -1198,6 +1198,19 @@ daemon 29.8.1).
 The Supabase MCP points at **production** (`diuwzagrpqhlutbqdvrs`), not local. It was
 used read-only; the integration test talks to `127.0.0.1:54321` directly.
 
+---
+
+# Session — 2026-10-10: RLS Test Hardening & Two-Axis Code Review
+
+**Scope:** Audit and harden RLS integration test suite (`tests/integration/rls-policies.db.test.ts`), fixing three vacuously passing tests (`task_queue`, `scrape_runs`, `audit_logs`) by seeding rows via service-role before asserting normal user invisibility. Conduct two-axis code review (Standards vs Spec) over changes since `b768911`.
+
+## What was built / fixed
+- **RLS Integration Tests Hardened**: `tests/integration/rls-policies.db.test.ts` updated with `expectInvisibleToNormalUser()` helper that seeds rows via the service-role client (bypassing RLS) prior to asserting that an authenticated normal user receives zero rows. Prevents false passes on empty tables.
+- **Code Review**: Executed parallel Standards and Spec sub-agents over diff `b768911...HEAD`. Verified 0 hard violations on Standards (777 tests passing, strict conventions followed); identified minor baseline smells (Divergent Change in dedupe engine) and spec gaps (skill confidence scoring, freshness/expiry lifecycle BE-110, run accounting execution BE-111).
+
+## Gates
+`pnpm typecheck` 0 · `pnpm lint` 0 · `pnpm test` 40 test files / **777 tests passed**.
+
 ### The test
 
 `tests/integration/profile-mutations.db.test.ts` - 8 tests, 7 passing. It creates real
