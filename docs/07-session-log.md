@@ -1190,7 +1190,7 @@ answer and nothing could fail unless someone already suspected the bug.
 
 ### Docker
 
-Docker Desktop is installed at `C:\Users\adnan\AppData\Local\Programs\DockerDesktop`
+Docker Desktop is installed at `C:\Users\<you>\AppData\Local\Programs\DockerDesktop`
 - not the usual `C:\Program Files\Docker`, which is why an earlier check reported it
 absent. The local Supabase stack auto-starts with it (`supabase_db_jobradar` et al,
 daemon 29.8.1).
@@ -1383,7 +1383,7 @@ Final state: `task_rows_left: 0` (the rollback left nothing behind), 1 profile u
 
 ### Environment note
 
-Docker Desktop lives at `C:\Users\adnan\AppData\Local\Programs\DockerDesktop`, not
+Docker Desktop lives at `C:\Users\<you>\AppData\Local\Programs\DockerDesktop`, not
 `C:\Program Files\Docker` — which is why an early check this session reported it absent. The Supabase
 MCP points at **production**, not local; it was used read-only plus `apply_migration` throughout,
 while the integration tests talk to `127.0.0.1:54321`.
