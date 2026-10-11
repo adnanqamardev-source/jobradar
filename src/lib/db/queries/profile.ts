@@ -31,6 +31,12 @@ export const profileSummarySchema = z.object({
   plan: planTierSchema,
   onboarding_completed: z.boolean(),
   onboarding_step: z.number(),
+  /**
+   * D7 — the "new since last visit" diff point (FED-004). Read here so the feed
+   * query does not need a second round-trip; written by the interstitial that
+   * closes the onboarding flow and by the feed view itself.
+   */
+  last_seen_feed_at: z.string().datetime().nullable(),
 });
 
 export type ProfileSummary = z.infer<typeof profileSummarySchema>;

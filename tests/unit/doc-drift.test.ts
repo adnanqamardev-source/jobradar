@@ -107,10 +107,10 @@ describe("README.md", () => {
     }
   });
 
-  it("says 'seven documents', not 'five'", () => {
+  it("says 'seven specification documents', not 'five'", () => {
     // The specific drift that shipped: "five" when there are seven
     expect(readme).not.toMatch(/five documents/i);
-    expect(readme).toMatch(/seven documents/i);
+    expect(readme).toMatch(/seven specification documents/i);
   });
 });
 

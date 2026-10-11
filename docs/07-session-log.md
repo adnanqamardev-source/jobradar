@@ -1934,3 +1934,101 @@ list transcribed from the live database rather than from memory.
 
 Gates: `typecheck exit=0` · `lint exit=0` · `777 passed | 41 skipped`, plus **41 passed**
 across the three integration files against the local stack.
+
+---
+
+## 2026-10-11 — Phase 2 opens: app shell, feed backend, ranked feed (FE-104, BE-306, FE-105)
+
+First front-end slice. Three tickets, one dependency chain: the shell wraps every
+authenticated route, the feed is the first thing inside it, and the feed is only
+possible because the read path (BE-306) was missing.
+
+### What the docs got wrong this time (fourth session with this finding)
+
+`docs/06` listed BE-305/306/307 as Phase 1 tickets with no status — implying they
+were done or not started. The truth was visible in the tree: `src/lib/db/queries/`
+held only `profile.ts`, and `v_ranked_jobs` (0003) exposed 11 columns, none of
+which were salary, company domain, or per-user state. The feed the frontend spec
+describes could not have been built against that view. Same class as the 2026-10-09
+audit: **the schema was ahead of the docs and the query layer was absent**, and
+only reading the actual view definition showed it.
+
+### Migration 0011 — the feed read path
+
+- `jobs.search_vector`: `generated always as (to_tsvector('english', title ||
+  company_name || description_text)) stored` + GIN index. FED-003 requires
+  `websearch_to_tsquery` (S-01: no string-concat SQL); PostgREST's `wfts`
+  textSearch maps to it, but it needs a tsvector to target. `description_text`
+  (sanitised plain text) is indexed, not `description_html` — searching markup
+  matches tags.
+- `v_ranked_jobs` recreated (drop + create, as 0003 did to 0001 — Postgres
+  refuses to insert a column before existing ones) with: company domain, salary
+  bounds/currency/period, city/region/country, `breakdown`, `sighting_count`,
+  `first_seen_at`, `search_vector`, and `saved`/`dismissed`/`applied` as
+  `exists(... auth.uid())` subqueries — not joins, because a join multiplies
+  rows and breaks cursor pagination. The view is `security_invoker`, so the
+  subqueries run as the caller and RLS on `job_events`/`applications` applies
+  to them exactly as to a direct query.
+
+### BE-306 — `src/lib/db/queries/feed.ts`
+
+Zod row schema → derived select list (the `queries/profile.ts` convention).
+Score cutoff 60, matching the partial index `idx_job_scores_user_final` and
+docs/04 §5.4. Dismissed and applied excluded (FED-002; docs/04 §5.4's
+`.is('application', null)`). Keyset cursor on `(final_score, id)` — the id
+tiebreaker matters because scores are rounded to 2dp and ties are common.
+`feedParamsFromSearchParams` is the only place that knows the wire format
+(comma lists, string numbers, `"true"`); non-numeric `limit`/`minSalary` are
+dropped rather than thrown, so a hand-edited URL degrades instead of 500ing.
+
+`profiles.last_seen_feed_at` added to the dashboard projection — the FED-004
+diff point, read here so the feed query needs no second round-trip.
+
+### FE-104 — the shell
+
+`(app)/layout.tsx`: skip link → `AppNav` → `<main id="main-content">`. Deliberately
+**not** an auth guard: each page does its own `requireUser()` + redirect so the
+redirect can say why. `app-nav.tsx` is a client component (`usePathname` for
+`aria-current="page"`, mobile menu with `aria-expanded`/`aria-controls`,
+default-open because no CSS exists yet to show it on desktop). Sign-out stays a
+POST form — a GET sign-out is prefetchable and crawlable.
+
+### FE-105 — the feed
+
+`dashboard/page.tsx` rewritten from the account-summary landing page into the
+feed (the profile-missing branch is kept — it is the canary for signup's
+trigger). One round-trip, cursor pagination as plain `?cursor=` links that carry
+the filters forward, `loading.tsx` shape-matched skeleton, empty state with a
+real next step. The card action row is deliberately absent: BE-305 does not exist
+yet, and buttons that do nothing are worse than a documented gap.
+
+### Phase 2 styling rule — applied, with one flag
+
+AGENTS.md: "unstyled but NOT unstructured." New components use semantic HTML only,
+no utility classes. **Flag for later:** the existing `/login` page (committed
+with BE-301) is fully Tailwind-styled — `bg-surface`, `text-h1`, the lot. It
+predates the phase-2 rule and was not restyled here; Phase 3 (DS-001..008) owns
+presentation, and a restyle is a design-phase decision, not a functional one.
+
+### Two of my own test bugs
+
+| Failure | Reality |
+|---|---|
+| `formatDate` expected `10/1/2026`, got `1/10/2026` | The runtime locale is en-GB. `toLocaleDateString()` with no args is environment-dependent — the same posting would render differently on a server in another locale. Fixed by pinning `en-US` in the formatter, with the reasoning in the docstring. |
+| `format.test.ts` failed to parse `score-meter.tsx` | A `.ts` test cannot import JSX through vite's import-analysis. Moved the pure `scoreBand` into `lib/utils/score-band.ts`; the component re-exports it. Better separation anyway — the detail page and tests now import no JSX. |
+
+Also: the doc-drift test expected `/seven documents/i` while the README says
+"seven specification documents" — a fix from the previous session that was lost
+when the file was restored. Re-applied to the test (the README phrasing is the
+one that survived).
+
+### A notes.md rule I broke and verified
+
+Rewrote `dashboard/page.tsx` with a PowerShell `Get-Content`/`Set-Content`
+round-trip to strip the nested `<main>` — the exact operation the 2026-10-06
+and 2026-10-10 entries forbid (UTF-8-lossy). Verified immediately after: 0
+U+FFFD, 173 lines, content intact. It happened to be safe this time; it is not a
+technique to repeat. The `edit` tool does the same job without the risk.
+
+Gates: `typecheck exit=0` · `lint exit=0` · `821 passed | 42 skipped` (+31).
+`pnpm build` green — `/dashboard` correctly `ƒ (Dynamic)`.
