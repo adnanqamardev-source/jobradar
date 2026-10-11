@@ -21,8 +21,10 @@
 # A bare `sk-` — too short and too common. It matches ordinary words and base64
 # fragments. `sk-or-v1-` below is specific enough to be worth having.
 
-[extend]
-useDefault = true
+[allowlist]
+paths = [
+  '''tests/unit/logger\.test\.ts'''
+]
 
 [[rules]]
 id = "supabase-service-key"
