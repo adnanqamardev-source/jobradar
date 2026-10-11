@@ -188,7 +188,7 @@ export interface ScoreWriter {
     upsert(
       values: unknown,
       options: { onConflict: string },
-    ): Promise<{ error: { message: string } | null }>;
+    ): PromiseLike<{ error: { message: string } | null }>;
   };
 }
 

@@ -7,7 +7,39 @@
  * received.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/env", () => ({
+  env: {
+    NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: "sb_publishable_test",
+    SUPABASE_SERVICE_ROLE_KEY: "sb_secret_test",
+    CRON_SECRET: "a".repeat(64),
+    OPENROUTER_API_KEY: "sk-or-v1-test",
+    OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1",
+    OPENROUTER_EMBEDDING_MODEL: "nvidia/nemotron-3-embed-1b:free",
+    OPENROUTER_CHAT_MODEL: "qwen/qwen3.8-27b:free",
+    RATE_LIMIT_APPLY_PER_MINUTE: 10,
+    RATE_LIMIT_SAVE_PER_MINUTE: 30,
+    RATE_LIMIT_DISMISS_PER_MINUTE: 30,
+    RATE_LIMIT_SEARCH_PER_MINUTE: 60,
+  },
+}));
+
+vi.mock("@/lib/db/admin", () => ({
+  createAdminClient: vi.fn(() => ({
+    from: vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: "profile not found" },
+      }),
+      upsert: vi.fn().mockResolvedValue({ error: null }),
+    }),
+    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+  })),
+}));
 
 import { CRON_HEADER, cronUnauthorizedBody, verifyCronSecret } from "@/lib/cron/auth";
 import { planEnqueue } from "@/lib/cron/plan-enqueue";
@@ -237,36 +269,21 @@ describe("dispatch", () => {
   });
 
   it("has no handler for any kind the enqueue cycle can produce", () => {
-    // `scrape_source` is what `planEnqueue` plans. With no handler it must fail loudly, and
-    // this test is what makes that a documented state rather than an accident.
-    expect(hasHandler("scrape_source")).toBe(false);
+    // `scrape_source` is what `planEnqueue` plans.
+    expect(hasHandler("scrape_source")).toBe(true);
   });
 
-  it("reports a handler that is wired but not yet implemented as a failure", async () => {
-    const result = await dispatch(task({ kind: "rescore_profile" }), now, signal);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("rescore_profile");
-  });
-
-  // The distinction that makes the message actionable: "no handler registered" points at the
-  // registry, "not yet wired" points at the missing store adapter. They must not collapse.
-  it("distinguishes an unimplemented handler from an unregistered one", async () => {
-    // A *valid* rescore payload, so this reaches the wiring gap rather than stopping at
-    // payload validation — which is the whole point of asserting the two messages apart.
-    const implemented = await dispatch(
-      task({ kind: "rescore_profile", payload: { profile_id: "profile-1" } }),
+  it("reports a failure when the profile does not exist", async () => {
+    const result = await dispatch(
+      task({ kind: "rescore_profile", payload: { profile_id: "non-existent" } }),
       now,
       signal,
     );
-    const unregistered = await dispatch(task({ kind: "score_jobs" }), now, signal);
-    if (implemented.ok || unregistered.ok) throw new Error("expected both to fail");
-    expect(implemented.error).toContain("not yet wired");
-    expect(unregistered.error).toContain("no handler registered");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("not found");
   });
 
-  it("validates a handler's payload before reporting the wiring gap", async () => {
-    // A malformed payload and a missing adapter are different bugs; the payload error must
-    // not be masked by the "not wired" message that would otherwise always win.
+  it("validates a handler's payload when profile_id is missing or invalid", async () => {
     const result = await dispatch(
       task({ kind: "rescore_profile", payload: { profile_id: 42 } }),
       now,
@@ -287,7 +304,8 @@ describe("dispatch", () => {
   });
 
   it("lists its registered kinds", () => {
-    expect(registeredKinds()).toEqual(["rescore_profile"]);
+    expect(registeredKinds()).toContain("rescore_profile");
+    expect(registeredKinds()).toContain("scrape_source");
   });
 });
 

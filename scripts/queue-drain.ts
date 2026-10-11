@@ -55,7 +55,7 @@ import { createClient } from "@supabase/supabase-js";
 import { env } from "@/lib/env";
 import { LEASE_MS, LOCAL_WORKER_ID, MAX_BATCH } from "@/lib/queue/constants";
 import { dispatch } from "@/lib/queue/dispatch";
-import { needsAuditLog, planClaim, settleTask, type Outcome, type QueueTask } from "@/lib/queue/plan";
+import { needsAuditLog, settleTask, type Outcome, type QueueTask } from "@/lib/queue/plan";
 
 // Validated by src/lib/env.ts, not by hand. Reading process.env directly here used to
 // give this script a second, laxer definition of "configured" than the rest of the app:
@@ -100,25 +100,20 @@ async function main() {
   // has the final say: this over-fetches (2× the cap) because `run_after <= now()` cannot
   // be expressed in PostgREST, and dropping backoff rows after a LIMIT would silently
   // shrink the batch below the cap.
-  let query = supabase
-    .from("task_queue")
-    .select("id,kind,status,priority,run_after,attempts,max_attempts")
-    .eq("status", "pending")
-    .order("priority", { ascending: true })
-    .order("run_after", { ascending: true })
-    .limit(MAX_BATCH * 2);
+  const { data: claimedRows, error: claimErr } = await supabase.rpc("claim_tasks", {
+    p_worker_id: LOCAL_WORKER_ID,
+    p_limit: MAX_BATCH,
+    p_kind: kind,
+    p_lease_seconds: Math.floor(LEASE_MS / 1000),
+  });
 
-  if (kind) query = query.eq("kind", kind);
-
-  const { data: rows, error } = await query;
-
-  if (error) {
-    console.error("[queue-drain] fetch error:", error.message);
+  if (claimErr) {
+    console.error("[queue-drain] claim_tasks error:", claimErr.message);
     process.exit(1);
   }
 
-  const tasks = (rows ?? []).flatMap((row) => {
-    const task = toTask(row);
+  const tasks = (Array.isArray(claimedRows) ? claimedRows : []).flatMap((row) => {
+    const task = toTask(row as Record<string, unknown>);
     return task ? [task] : [];
   });
 
@@ -127,43 +122,13 @@ async function main() {
     return;
   }
 
-  // Injected, never Date.now() inside the plan. See plan.ts.
   const now = new Date();
-  const entries = planClaim(tasks, now, { kind, workerId: LOCAL_WORKER_ID });
 
-  for (const skipped of entries.filter((e) => e.kind === "skip")) {
-    if (skipped.reason !== "wrong-kind") {
-      console.log(`[queue-drain] ${skipped.task.id} skipped: ${skipped.reason}`);
-    }
-  }
-
-  for (const claim of entries.filter((e) => e.kind === "claim")) {
-    const { task, lease } = claim;
-
-    // Compare-and-swap claim. See the `claim-primitive` note in the header.
-    const { data: claimed, error: claimErr } = await supabase
-      .from("task_queue")
-      .update({ status: "running", locked_at: lease.locked_at, locked_by: lease.locked_by })
-      .eq("id", task.id)
-      .eq("status", "pending")
-      .select("id");
-
-    if (claimErr) {
-      console.warn(`[queue-drain] task ${task.id} claim failed:`, claimErr.message);
-      continue;
-    }
-    if (!claimed || claimed.length === 0) {
-      console.log(`[queue-drain] task ${task.id} claimed by another worker, skipping`);
-      continue;
-    }
-
+  for (const task of tasks) {
     console.log(`[queue-drain] processing ${task.kind} (${task.id})`);
 
-    // Resolution is dispatch.ts's job (BE-108), the same module the cron route uses. It
-    // returns a failed Outcome for an unregistered or unimplemented kind instead of `ok:
-    // true`, which is what stops an unrunnable task being marked done.
     const outcome: Outcome = await dispatch(
-      { id: task.id, kind: task.kind, payload: {} },
+      { id: task.id, kind: task.kind, payload: (task as any).payload ?? {} },
       now,
       new AbortController().signal,
     );
