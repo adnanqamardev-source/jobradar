@@ -13,6 +13,7 @@
 import type { RawJob, CanonicalJob, RemoteScope } from "@/types/canonical-job";
 
 import { matchSkills } from "@/lib/ingest/skills";
+import { sanitizeDescriptionHtml } from "@/lib/ingest/sanitize";
 
 // ---------------------------------------------------------------------------
 // Remote scope detection (BE-317)
@@ -382,7 +383,10 @@ export function normaliseJob(raw: RawJob): CanonicalJob {
     title: raw.title,
     titleNorm: raw.title.toLowerCase().replace(/[^a-z0-9]/g, ""),
     descriptionText: raw.descriptionText ?? null,
-    descriptionHtml: null, // Would be populated by HTML sanitiser
+    // S-02 (docs/03 §6.2): `description_html` is sanitised **on ingest** to the
+    // allowlist in `src/lib/ingest/sanitize.ts` (`p, ul, li, strong, em, a, br, h3, h4`),
+    // so the store never holds a tag the FE would have to sanitise at render time.
+    descriptionHtml: sanitizeDescriptionHtml(raw.descriptionHtml ?? null),
     location: {
       city: location.city,
       region: location.region,

@@ -105,9 +105,7 @@ describe("logger", () => {
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    // eslint-disable-next-line @typescript-eslint/no-empty-function
     consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    // eslint-disable-next-line @typescript-eslint/no-empty-function
     consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
 
