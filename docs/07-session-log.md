@@ -2330,3 +2330,77 @@ arguing for the file's own thesis. Deleted it; the unit test already covered tha
 `updatedAt` / `extractedAt`, but that schema is camelCase and not yet wired to a PostgREST
 read, so it is reported here rather than churned: when FE-119 wires it, it needs
 `dbTimestampSchema` too.
+
+---
+
+## Session - 2026-10-14 (5th) · making the drift loud instead of silent
+
+### The remote cannot be pushed, and the reason is naming
+
+`supabase db push --dry-run` (after `supabase login`) reports:
+
+```
+Remote migration versions not found in local migrations directory.
+  ... 20261006025441 20261006025513 ... 20261008031234
+```
+
+Twelve rows in `supabase_migrations.schema_migrations` with **timestamp** versions, against
+local files named `0001_…`–`0012_…`. The CLI matches local filename prefixes to that table
+and finds no overlap, so it refuses to push. The remote project was originally migrated with
+timestamp-named files; this repo uses numeric prefixes, deliberately — `migration-drift.test.ts`
+asserts "numbers migrations contiguously from 0001".
+
+**Two obvious commands are both wrong here**, and it is worth writing down why:
+
+| Command | Why not |
+|---|---|
+| `migration repair --status reverted <12 versions>` | Marks them reverted, so the CLI then tries to re-apply `0001_init.sql` over a database that already has those tables → *relation already exists*. |
+| `db pull` | **Overwrites the hand-authored migration files.** In a spec-first repo whose numbering is pinned by a test and whose `db:reset` is a gate, that rewrites history and breaks the gate. |
+
+The recovery depends on one fact only the owner knows — whether that database holds anything
+worth keeping. If not, `supabase db reset --linked` drops and re-applies `0001`–`0012` and
+writes a matching history table (`db:reset` is already the Phase 1 gate, so it is known-good;
+the cost is re-onboarding a profile). If there is data, it needs SQL access to apply `0011` +
+`0012` and then rewrite the history rows to `0001`…`0012` by hand.
+
+**Blocked on a credential.** The CLI reports `Invalid access token` on any authenticated
+command, and the owner's replacement token was pasted into the chat transcript rather than
+into the CLI prompt. An `sbp_` token in a transcript is a leak — AGENTS.md says rotate and
+say so — so it was not used, and the push stays a manual step until the CLI is re-authenticated
+with `pnpm exec supabase login`.
+
+### The durable fix: a drift gate that opens a connection
+
+`migration-drift.test.ts` kept the *SQL text* honest — numbering, the view definition,
+`remote_scope` exposure, grants. It is entirely static, so it could not notice that the
+configured database was three migrations behind the code for three days while reporting green.
+`pnpm db:reset` was green too, against a *different* database.
+
+`tests/integration/schema-drift.db.test.ts` closes that: one read-only probe per migration's
+**observable** effect (tables, views, columns), run against whatever `TEST_SUPABASE_URL` names.
+Sequential on purpose, because the first failure should be the *earliest* missing migration —
+the one to push.
+
+Probed against local it is green. Probed against the remote it says exactly what is wrong:
+
+```
+Earliest missing migration: 0011.
+  - 0011 - column jobs.search_vector: 42703 ... does not exist
+  - 0011 - view v_ranked_jobs.first_seen_at: 42703 ... does not exist
+  - 0011 - view v_ranked_jobs.saved: 42703 ... does not exist
+  - 0011 - view v_ranked_jobs.search_vector: 42703 ... does not exist
+  - 0012 - table job_sightings: PGRST205 ... not in the schema cache
+```
+
+**What it cannot check, asserted as a gap:** `0004`–`0010` create only functions and triggers.
+PostgREST exposes the `public` schema, so proving a function exists means calling it, and
+`upsert_job` / `claim_tasks` write. Asserting existence by side effect is worse than not
+asserting it, so a test pins the list of unprobed migrations — a guard that silently skips half
+its scope reads as green, which is the failure mode that caused all of this.
+
+A third test proves a probe actually fails on a missing table *and* a missing column, so the
+gate cannot pass by swallowing errors.
+
+### Gates
+
+`typecheck exit=0` - `lint exit=0` - **920 passed | 0 skipped** (52 files).

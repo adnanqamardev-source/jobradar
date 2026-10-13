@@ -135,6 +135,17 @@ detail lives in the tables above; here is only the rule and its trigger.
   total outage whose only symptom is Next's *"An error occurred in the Server Components
   render"* plus a digest — so return `{ error }`, `logger.error` the real cause, and let the
   page say which thing failed.
+- **A gate that never opens a connection cannot see the database.** Trigger: adding a
+  migration, or any claim that "the schema is fine". Run:
+  `pnpm exec vitest run tests/integration/schema-drift.db.test.ts` with `TEST_SUPABASE_URL`
+  set — point it at whatever the app points at. Pointer: `migration-drift.test.ts` is static
+  (it greps SQL text) and happily reported green while the configured database was three
+  migrations behind, for three days. Static checks and live checks answer different questions;
+  a repo needs both, and only the live one notices the database moved.
+- **PowerShell 5.1 on this machine.** No `&&` (use one command per line, or `;`), and
+  `supabase` is not on PATH — use `pnpm exec supabase …` or `node_modules\.bin\supabase.cmd`.
+  Also: judge `eslint`/`build`/`supabase` by `$LASTEXITCODE`, not by the red stderr, because
+  the PowerShell wrapper turns an upgrade notice into `RemoteException`.
 - **Docs' literals are tests' inputs.** If a doc shows an example value, the schema/code
   must accept it — assert it in a test, don't re-read it.
 - **`""` is a value.** `??` and Zod `.optional()` both accept it; `.env` and CI `vars:`
