@@ -312,6 +312,24 @@ The 2048-dim width comes from the free embedding model chosen in `docs/02` §2
 | `weight` | `numeric(3,2) default 1.0` | mentioned in requirements vs nice-to-have |
 | PK | `(job_id, skill_id)` |
 
+**`job_sightings`** - one row per (job, source posting URL): where each sighting of a
+canonical job was seen. Added by migration `0012` for FED-005. `jobs.sighting_count` is
+the cluster total; this table is the per-source breakdown the detail view lists.
+
+| Column | Type |
+|---|---|
+| `job_id` | `uuid` FK -> jobs cascade |
+| `source_id` | `uuid` FK -> sources set null |
+| `source_url` | `text` - the posting URL on that source (natural key with `job_id`) |
+| `first_seen_at` | `timestamptz default now()` - preserved on conflict |
+| `last_seen_at` | `timestamptz default now()` |
+| `sighting_count` | `integer default 1` - per source, not the cluster total |
+| PK | `(job_id, source_url)` |
+
+Written only by `upsert_job` (service_role). Readable by any authenticated user; there is
+no insert/update/delete policy, so RLS denies writes from end users. Deleting the job
+cascades; deleting the source nulls `source_id` and keeps the sighting as evidence.
+
 ### 5.5 Matching tables
 
 **`job_scores`** — one row per (user, job). Written by the scorer, read by the feed.

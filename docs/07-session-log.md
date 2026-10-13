@@ -2163,3 +2163,81 @@ integration, was 42 — 6 new files/tests in `tests/integration/feed-actions.db.
 Note for later sessions: `pnpm test` reports **42 skipped** unless the three
 `TEST_SUPABASE_*` variables are set. A green run with skips is *not* the same
 evidence as a green run with the integration suites executing.
+
+---
+
+## Session — 2026-10-14 (3rd) · FE-110, FED-005, and the first component tests
+
+Three items closed: the apply dialog (FE-110), the duplicate-cluster work
+(FED-005), and the sighting table they both exposed a need for.
+
+### FED-005 splits in two, and one half was already true
+
+`jobs.dedupe_hash` is **UNIQUE**. A duplicate cluster is therefore *one row* —
+ingestion collapses every sighting onto it, and `dismissJob` already hides the
+entire cluster. The ticket's "dismissing the cluster dismisses all occurrences"
+needed no new action at all, so the FE-107 control is the same server action
+under a label that says what it will do ("Hide all of these" when
+`sighting_count > 1`).
+
+The other done-when — "lists sources in the detail view" — had **nothing to
+read**. `jobs.sighting_count` is an integer; no table held the individual
+sightings, and they were not derivable from anything.
+
+### 0012 — `job_sightings`
+
+One row per (job, source posting URL), written inside `upsert_job` in the same
+statement as the job upsert, so a job can never claim more sources than the
+table records. `first_seen_at` is preserved on conflict for the same reason
+`jobs.first_seen_at` is (`0010`): a posting re-listed daily must not look brand
+new forever.
+
+Two findings surfaced while building it:
+
+- **`jobs.source_id` was a real column that nothing had ever populated.**
+  `toJobRow` never emitted it and `upsertCanonicalJob` had no source argument,
+  so there was no way to attribute a sighting even if the table existed. Both now
+  take an optional `sourceId`, and `scrape-source.ts` passes it.
+- **I assumed columns again.** The test's `seedSource` inserted `sources.slug`,
+  which does not exist — it is on `companies`. Same class as the `job_events.id`
+  bug hours earlier: a column name I read from memory of a *similar* table. Two
+  more guesses followed (`source_kind = 'greenhouse'` instead of
+  `api_greenhouse`) before I stopped and read the DDL. That is twice in one day.
+
+### First component tests, and two traps
+
+`@testing-library/react`, `@testing-library/user-event` and `jsdom` are
+devDependencies now (approved). Environment stays `node`; component tests opt in
+with a `// @vitest-environment jsdom` docblock rather than splitting the suite
+into projects, so the requirement sits next to the test that needs it.
+
+Trap one: **tsconfig sets `"jsx": "preserve"`**, which is right for Next (it hands
+JSX to SWC) and wrong for vitest, which has no SWC step — every `.tsx` test died
+with "Unexpected JSX expression". Vite 8 transforms with **oxc, not esbuild**, so
+`esbuild.jsx` is silently ignored; `oxc: { jsx: { runtime: "automatic" } }` is the
+option that works. A config flag that does nothing is the same failure mode as a
+grant that does nothing.
+
+Trap two: **my date test was vacuous.** The claim under test is "a date input is
+read as local midnight, not UTC midnight" — but under `TZ=UTC` those are the same
+instant, so the test passed against both implementations. It only became real
+when I pinned `process.env.TZ = "Asia/Kolkata"` and asserted `getHours() === 0`;
+swapping in the UTC parse then failed it. **A test that passes under both
+implementations is not evidence about either.**
+
+### Cost worth naming
+
+`/dashboard` went from 928 B to 14.7 kB of page JS (first load 106 → 120 kB) —
+Radix Dialog, for one modal. That is the price of docs/06 §8.4's "unstyled
+primitives from Day 1" and it is a deliberate trade, but it is a number, not an
+assumption, and DS-012 should see it.
+
+### Gates
+
+`typecheck exit=0` · `lint exit=0` · `906 passed | 0 skipped` (48+ integration,
+12 component). `pnpm db:reset` applies **twelve** migrations cleanly. `pnpm build`
+green.
+
+`docs/02a-schema.md` was edited with a latin1 in / latin1 out script (it is still
+not valid UTF-8, which is the proof it was lossless) and the diff is +18/-0 —
+purely additive, as the docs rule requires.

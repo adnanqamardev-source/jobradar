@@ -29,6 +29,10 @@ import { JobCard } from "@/components/feed/job-card";
 import { requireUser, type AuthenticatedUser } from "@/lib/auth/require-user";
 import { createUserClient } from "@/lib/db/user-client";
 import { getOwnProfileSummary } from "@/lib/db/queries/profile";
+import {
+  queryResumeVersions,
+  type ResumeVersion,
+} from "@/lib/db/queries/resume-versions";
 import { feedParamsFromSearchParams, queryFeed } from "@/lib/db/queries/feed";
 import { AppError } from "@/lib/errors";
 
@@ -98,6 +102,17 @@ export default async function DashboardPage({
     lastSeenFeedAt: profile.last_seen_feed_at,
   });
 
+  // One résumé query for the whole page, not one per card (FE-110 / JOB-003). The picker
+  // only appears inside a dialog that is closed by default, and a query per card would be
+  // N round-trips for a list the user may never open. A failure here is non-blocking —
+  // JOB-003 requires the picker to degrade to an empty state, not to block the feed.
+  let resumeVersions: ResumeVersion[] = [];
+  try {
+    resumeVersions = await queryResumeVersions(supabase);
+  } catch {
+    resumeVersions = [];
+  }
+
   if ("error" in result) {
     return (
       <>
@@ -156,7 +171,7 @@ export default async function DashboardPage({
           <ul>
             {result.jobs.map((job) => (
               <li key={job.id}>
-                <JobCard job={job} />
+                <JobCard job={job} resumeVersions={resumeVersions} />
               </li>
             ))}
           </ul>

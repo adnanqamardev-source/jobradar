@@ -377,8 +377,23 @@ describe("upsertCanonicalJob", () => {
       "seniority", "salary_min", "salary_max", "salary_currency", "salary_period",
       "salary_raw", "description_text", "description_html", "skills", "posted_at",
       "source_url", "apply_url", "status", "confidence", "raw",
+      // Added 0012: upsert_job reads it to attribute the job_sightings row. It was a real
+      // `jobs` column that nothing populated before this.
+      "source_id",
     ];
     expect(Object.keys(calls[0]?.pRow ?? {}).sort()).toEqual([...expected].sort());
+  });
+
+  it("writes the source id when the caller passes one", () => {
+    const { writer, calls } = fakeWriter({ error: null });
+    void upsertCanonicalJob(writer, makeJob(), "hash-1", "3f2a9c1e-0000-4000-8000-000000000009");
+    expect(calls[0]?.pRow.source_id).toBe("3f2a9c1e-0000-4000-8000-000000000009");
+  });
+
+  it("defaults the source id to null so the two-argument call still works", () => {
+    const { writer, calls } = fakeWriter({ error: null });
+    void upsertCanonicalJob(writer, makeJob(), "hash-1");
+    expect(calls[0]?.pRow.source_id).toBeNull();
   });
 
   it("writes null rather than undefined for absent salary and description", () => {

@@ -31,6 +31,7 @@ Approaches that didn't work — read before trying something similar.
 | 2026-10-14 | Wrote three idempotency tests for the feed actions and confirmed they pass — **against the old, broken code too.** The cause was not a weak assertion but the client double: its `single()` and `maybeSingle()` were the same terminal, so the distinction the tests depended on (PostgREST returns `PGRST116` on zero rows for `single()`, `null` for `maybeSingle()`) did not exist in the test world. Two more double defects hid behind it — `limit()` returned a terminal, so `.limit(1).maybeSingle()` was `TypeError: not a function`, and `is()` only existed one chain level down. | **A stub whose two methods are behaviourally identical makes a real defect invisible** — the new axis of "guards must be able to fail". After writing a regression test, revert the production fix and confirm the test *fails*: `.single()` restored over the `markApplied` upsert is the exact check that exposed it. Keep the double generic (`eq`/`is` any order, terminal decides row-vs-array, `then` so `await` works) instead of hand-rolling a chain per table. |
 
 | 2026-10-14 | Closed the session claiming everything was verified at unit level because "the Docker daemon is down" — and the very first integration test found `job_events` has no `id` column, so `.select("id")` returned `42703` and **every save and dismiss 500'd**. 16 green unit tests sat on top of a completely broken query, because the double answers any column name. | **A stub that accepts any input cannot falsify a claim about that input's validity.** Column names, constraints and SQL semantics belong in `tests/integration/*.db.test.ts` against a live database, not in a double. When a claim is deferred for lack of a database, treat the whole feature as unverified — the double's green is not partial credit. Start Docker Desktop and run `pnpm db:reset` before calling any query-shaped work done. |
+| 2026-10-14 | Hours after that fix, wrote an integration test seeding a `sources` row with `sources.slug` (that column is on `companies`) and `kind: "greenhouse"` (the enum is `api_greenhouse`). Both from memory of a similar table, both caught only by Postgres. | **Read the DDL before writing a fixture against a table you have not just read** — same failure as `job_events.id`, and the second time in one day. The lesson is not "tests are good", it is that *the database is the only authority on its own shape*, so a fixture is a schema assertion in disguise. `pg_policies` is not PostgREST-exposed either: assert the RLS outcome with a signed-in client, not the policy catalog. |
 
 ## Broken loops
 
@@ -135,7 +136,9 @@ detail lives in the tables above; here is only the rule and its trigger.
 - **Guards must be able to fail.** A checker that can't reject its own file is decoration —
   prove it rejects known-bad *and* accepts the real target, always both directions. The same
   applies to a **stub whose two methods behave identically**: after a regression test, revert
-  the production fix and confirm the test fails before trusting it.
+  the production fix and confirm the test fails before trusting it. And check the *test* can
+  fail under the environment it runs in: "local midnight ≠ UTC midnight" passes under `TZ=UTC`
+  against both implementations, so pin a non-UTC `TZ` before believing it.
 - **Tables and regexes are transcribed programmatically.** Never hand-copy literals between
   files or reverse them by typing; script it and assert the order.
 - **`\b` stops at word characters.** A token ending in punctuation (`C++`, `C#`) needs a

@@ -283,7 +283,11 @@ export type UpsertOutcome =
  * that Postgres will happily accept a `jsonb` key it does not use — `jsonb_populate_record`
  * ignores keys with no matching column — so the mapping is pinned by test rather than trusted.
  */
-export function toJobRow(job: CanonicalJob, hash: string): Record<string, unknown> {
+export function toJobRow(
+  job: CanonicalJob,
+  hash: string,
+  sourceId: string | null = null,
+): Record<string, unknown> {
   return {
     dedupe_hash: hash,
     title: job.title,
@@ -308,6 +312,9 @@ export function toJobRow(job: CanonicalJob, hash: string): Record<string, unknow
     posted_at: job.postedAt,
     source_url: job.sourceUrl,
     apply_url: job.applyUrl,
+    // `jobs.source_id` predates this call and was never populated by anything, because no
+    // caller had a source to pass. 0012 reads it to attribute the `job_sightings` row.
+    source_id: sourceId,
     status: job.status,
     confidence: job.confidence,
     raw: job.raw,
@@ -339,13 +346,22 @@ export function toJobRow(job: CanonicalJob, hash: string): Record<string, unknow
  *
  * `first_seen_at` is preserved on conflict so a job re-listed daily does not look brand new
  * forever and never decays to `stale` (ING-010).
+ *
+ * ## The source is part of the payload (0012)
+ *
+ * `sourceId` reaches the database as `source_id` so `upsert_job` can attribute the
+ * `job_sightings` row — the per-source breakdown FED-005 lists. It defaults to `null`
+ * because the two-argument call is still valid (a caller with no source records the sighting
+ * without attributing it) and because `jobs.source_id` predated this call and was, until now,
+ * never written by anything.
  */
 export async function upsertCanonicalJob(
   writer: JobWriter,
   job: CanonicalJob,
   hash: string,
+  sourceId: string | null = null,
 ): Promise<UpsertOutcome> {
-  const { error } = await writer.rpc("upsert_job", { p_row: toJobRow(job, hash) });
+  const { error } = await writer.rpc("upsert_job", { p_row: toJobRow(job, hash, sourceId) });
 
   if (error) {
     return { ok: false, error: { code: "dedupe_upsert_failed", message: error.message } };

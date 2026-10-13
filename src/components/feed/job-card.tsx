@@ -12,11 +12,18 @@
 import Link from "next/link";
 
 import type { FeedRow } from "@/lib/db/queries/feed";
+import type { ResumeVersion } from "@/lib/db/queries/resume-versions";
 import { formatDate, formatSalary } from "@/lib/utils/format";
 import { JobCardActions } from "./job-card-actions";
 import { ScoreMeter } from "./score-meter";
 
-export function JobCard({ job }: { job: FeedRow }) {
+export function JobCard({
+  job,
+  resumeVersions,
+}: {
+  job: FeedRow;
+  resumeVersions: ResumeVersion[];
+}) {
   const salary = formatSalary(job);
 
   return (
@@ -54,10 +61,18 @@ export function JobCard({ job }: { job: FeedRow }) {
 
       {/*
         FE-107: Save / Dismiss with optimistic update + rollback + alert
-        toast. Mark applied stays disabled until the apply modal (FE-110)
-        exists — see job-card-actions.tsx.
+        toast, plus the FE-110 apply dialog. `sightingCount` decides whether
+        Dismiss is labelled "Hide all of these" — a cluster is one `jobs` row
+        (dedupe_hash is UNIQUE), so there is nothing else to hide, and saying
+        so is what makes the cluster scope legible.
       */}
-      <JobCardActions jobId={job.id} initialState={{ saved: job.saved, dismissed: job.dismissed }} />
+      <JobCardActions
+        jobId={job.id}
+        jobTitle={job.title}
+        sightingCount={job.sighting_count}
+        resumeVersions={resumeVersions}
+        initialState={{ saved: job.saved, dismissed: job.dismissed }}
+      />
     </article>
   );
 }

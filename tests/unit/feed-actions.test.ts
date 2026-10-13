@@ -427,6 +427,35 @@ describe("markApplied", () => {
     expect(client.eventInserts[0]).toMatchObject({ application_id: "app-1", from_stage: null, to_stage: "applied" });
   });
 
+  it("writes the follow-up date JOB-003 collects", async () => {
+    signedIn();
+    const client = makeClient({ job: SNAPSHOT_JOB });
+    withClient(client);
+
+    const res = await markApplied({
+      jobId: JOB_ID,
+      appliedAt: "2026-10-11T00:00:00.000Z",
+      nextActionAt: "2026-10-25T00:00:00.000Z",
+    });
+
+    expect(res.ok).toBe(true);
+    const [upsert] = client.upserts;
+    if (upsert === undefined) throw new Error("expected an application upsert");
+    expect(upsert).toMatchObject({ next_action_at: "2026-10-25T00:00:00.000Z" });
+  });
+
+  it("writes a null follow-up date when the dialog left it blank", async () => {
+    signedIn();
+    const client = makeClient({ job: SNAPSHOT_JOB });
+    withClient(client);
+
+    await markApplied({ jobId: JOB_ID, appliedAt: "2026-10-11T00:00:00.000Z" });
+
+    const [upsert] = client.upserts;
+    if (upsert === undefined) throw new Error("expected an application upsert");
+    expect(upsert).toMatchObject({ next_action_at: null });
+  });
+
   it("returns internal_error when the application upsert fails", async () => {
     signedIn();
     const client = makeClient({ job: SNAPSHOT_JOB, upsertError: { message: "rls denied" } });

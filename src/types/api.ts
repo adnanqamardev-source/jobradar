@@ -127,10 +127,18 @@ export const dismissJobRequestSchema = z.object({
 });
 export type DismissJobRequest = z.infer<typeof dismissJobRequestSchema>;
 
-/** Mark a job as applied. */
+/**
+ * Mark a job as applied.
+ *
+ * `appliedAt` and `nextActionAt` are full ISO datetimes rather than `yyyy-mm-dd`: the
+ * modal formats a `<input type="date">` into one, and storing a bare date would make
+ * "applied today" ambiguous in the user's timezone. The date input alone is not enough
+ * evidence — Zod has to reject the string a form would produce by accident.
+ */
 export const markAppliedRequestSchema = z.object({
   jobId: z.string().uuid(),
   appliedAt: z.string().datetime(),
+  nextActionAt: z.string().datetime().optional(),
   notes: z.string().max(2000).optional(),
   resumeVersionId: z.string().uuid().optional(),
 });

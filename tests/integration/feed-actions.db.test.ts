@@ -25,6 +25,7 @@
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { z } from "zod";
 
 const URL = process.env.TEST_SUPABASE_URL;
 const SERVICE_ROLE = process.env.TEST_SUPABASE_SERVICE_ROLE;
@@ -290,5 +291,194 @@ suite("feed actions against a real Postgres", () => {
     const { data, error } = await admin.from("job_events").select("id").limit(1);
     expect(data).toBeNull();
     expect(error?.code).toBe("42703");
+  });
+});
+
+suite("job sightings through upsert_job (FED-005, migration 0012)", () => {
+  beforeAll(() => {
+    admin = createClient(URL!, SERVICE_ROLE!, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+  });
+
+  afterAll(async () => {
+    const ignore = () => undefined;
+    for (const id of createdUserIds) {
+      await admin.auth.admin.deleteUser(id).catch(ignore);
+    }
+    if (createdJobIds.length > 0) {
+      await admin.from("jobs").delete().in("id", createdJobIds).then(ignore, ignore);
+    }
+  });
+
+  async function seedSource(label: string, kind = "api_greenhouse"): Promise<string> {
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const { data, error } = await admin
+      .from("sources")
+      .insert({ name: `${TAG}-${label}-${suffix}`, kind })
+      .select("id")
+      .single();
+    if (error || !data) throw new Error(`seed source ${label}: ${error?.message}`);
+    return data.id as string;
+  }
+
+  /** Call `upsert_job` the way `upsertCanonicalJob` does. */
+  async function upsert(raw: Record<string, unknown>) {
+    const { data, error } = await admin.rpc("upsert_job", { p_row: raw });
+    if (error) throw new Error(`upsert_job: ${error.message}`);
+    return data as { id: string; sighting_count: number; first_seen_at: string };
+  }
+
+  function jobRow(hash: string, sourceUrl: string, sourceId: string | null): Record<string, unknown> {
+    return {
+      dedupe_hash: hash,
+      title: `${TAG} ${hash}`,
+      company_name: `${TAG} Co`,
+      source_url: sourceUrl,
+      source_id: sourceId,
+    };
+  }
+
+  it("records one sighting per source URL and accumulates the cluster count", async () => {
+    const greenhouse = await seedSource("gh", "api_greenhouse");
+    const lever = await seedSource("lv", "api_lever");
+    const hash = `${TAG}-${Date.now()}-a`;
+    const canonicalUrl = `https://boards.greenhouse.example/${hash}`;
+
+    const first = await upsert(jobRow(hash, canonicalUrl, greenhouse));
+    const second = await upsert(jobRow(hash, `https://jobs.lever.example/${hash}`, lever));
+
+    // One canonical row, cluster count incremented by upsert_job.
+    expect(second.id).toBe(first.id);
+    expect(first.sighting_count).toBe(1);
+    expect(second.sighting_count).toBe(2);
+    createdJobIds.push(first.id);
+
+    const { data: sightings, error } = await admin
+      .from("job_sightings")
+      .select("source_id, source_url, sighting_count")
+      .eq("job_id", first.id);
+    expect(error).toBeNull();
+    expect(sightings).toHaveLength(2);
+    expect(sightings?.map((s) => s.source_id).sort()).toEqual([greenhouse, lever].sort());
+  });
+
+  it("bumps the per-source count on a re-listing without adding a row", async () => {
+    const source = await seedSource("relist");
+    const hash = `${TAG}-${Date.now()}-b`;
+    const url = `https://boards.greenhouse.example/${hash}`;
+
+    const first = await upsert(jobRow(hash, url, source));
+    await upsert(jobRow(hash, url, source));
+    await upsert(jobRow(hash, url, source));
+    createdJobIds.push(first.id);
+
+    const { data: sightings } = await admin
+      .from("job_sightings")
+      .select("sighting_count, first_seen_at, last_seen_at")
+      .eq("job_id", first.id);
+    expect(sightings).toHaveLength(1);
+    expect(sightings?.[0]?.sighting_count).toBe(3);
+  });
+
+  it("keeps first_seen_at and never resurrects it", async () => {
+    const source = await seedSource("firstseen");
+    const hash = `${TAG}-${Date.now()}-c`;
+    const url = `https://boards.greenhouse.example/${hash}`;
+
+    const first = await upsert(jobRow(hash, url, source));
+    createdJobIds.push(first.id);
+
+    const { data: before } = await admin
+      .from("job_sightings")
+      .select("first_seen_at")
+      .eq("job_id", first.id)
+      .single();
+    const firstSeenAt = before?.first_seen_at;
+
+    // Rewind the sighting clock, re-sight, and prove the original is untouched.
+    await admin
+      .from("job_sightings")
+      .update({ first_seen_at: "2020-01-01T00:00:00.000Z" })
+      .eq("job_id", first.id);
+    await upsert(jobRow(hash, url, source));
+
+    const { data, error: afterErr } = await admin
+      .from("job_sightings")
+      .select("first_seen_at, sighting_count")
+      .eq("job_id", first.id)
+      .single();
+    expect(afterErr).toBeNull();
+    const row = z.object({ first_seen_at: z.string(), sighting_count: z.number() }).parse(data);
+    expect(new Date(row.first_seen_at).toISOString()).toBe("2020-01-01T00:00:00.000Z");
+    expect(row.sighting_count).toBe(2);
+    expect(firstSeenAt).toBeTruthy();
+  });
+
+  it("deletes sightings with the job, but survives losing the source", async () => {
+    const source = await seedSource("ondelete");
+    const hash = `${TAG}-${Date.now()}-d`;
+    const url = `https://boards.greenhouse.example/${hash}`;
+
+    const job = await upsert(jobRow(hash, url, source));
+    createdJobIds.push(job.id);
+
+    await admin.from("sources").delete().eq("id", source);
+    const { data: afterSource } = await admin
+      .from("job_sightings")
+      .select("source_id, source_url")
+      .eq("job_id", job.id);
+    expect(afterSource).toHaveLength(1);
+    // `on delete set null`: the evidence the posting was seen survives the provider row.
+    expect(afterSource?.[0]?.source_id).toBeNull();
+
+    await admin.from("jobs").delete().eq("id", job.id);
+    const { data: afterJob } = await admin.from("job_sightings").select("source_url").eq("job_id", job.id);
+    expect(afterJob).toHaveLength(0);
+  });
+
+  it("is readable by an authenticated user but not writable by one", async () => {
+    // Behavioural, not metadata: `pg_policies` is not PostgREST-exposed, and asserting the
+    // policy *catalog* would only prove the DDL ran. What matters is that a signed-in
+    // user can read the corpus row and cannot fabricate one.
+    const email = `${TAG}-rls-${Date.now()}@example.invalid`;
+    const password = "Sighting-Rls-Test-123!";
+    const { data: created, error: createErr } = await admin.auth.admin.createUser({
+      email,
+      email_confirm: true,
+    });
+    if (createErr || !created.user) throw new Error(`createUser rls: ${createErr?.message}`);
+    createdUserIds.push(created.user.id);
+    await admin.auth.admin.updateUserById(created.user.id, { password });
+
+    const anon = createClient(URL!, ANON_KEY!, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { error: signInErr } = await anon.auth.signInWithPassword({ email, password });
+    if (signInErr) throw new Error(`signIn rls: ${signInErr.message}`);
+
+    const source = await seedSource("rls");
+    const hash = `${TAG}-${Date.now()}-e`;
+    const job = await upsert(jobRow(hash, `https://boards.greenhouse.example/${hash}`, source));
+    createdJobIds.push(job.id);
+
+    const read = await anon.from("job_sightings").select("source_url").eq("job_id", job.id);
+    expect(read.error).toBeNull();
+    expect(read.data).toHaveLength(1);
+
+    const write = await anon.from("job_sightings").insert({
+      job_id: job.id,
+      source_url: "https://forged.example/posting",
+    });
+    // RLS denies it: there is no INSERT policy for authenticated, so the row filter
+    // evaluates to false and the statement affects zero rows.
+    expect(write.error ?? null).not.toBeNull();
+    expect(write.data).toBeNull();
+
+    const { data: after } = await admin
+      .from("job_sightings")
+      .select("source_url")
+      .eq("job_id", job.id);
+    expect(after).toHaveLength(1);
   });
 });

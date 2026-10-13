@@ -260,6 +260,7 @@ Rule column is written as `(select auth.uid())` â€” see Â§4.1.
 | `audit_logs` | admin | âœ… | â›” | â›” | â›” | append-only, service key writes |
 | `digests` | owner | âœ… | â›” | â›” | â›” | user can see "we skipped yesterday, nothing new" |
 | `job_events` | owner | âœ… | âœ… | â›” | â›” | implicit feedback rows |
+| `job_sightings` | shared corpus | âœ… | â›” | â›” | â›” | **Added 2026-10-14 (0012).** Per-source sighting log (FED-005). Read like `jobs`; writes happen only inside `upsert_job`, which is `security definer` granted to `service_role` alone. No client write policy exists, so RLS denies inserts/updates/deletes to end users — the restriction is the *absence* of a policy, which is why there is nothing to revoke here (unlike function grants, §4.4). |
 
 ### 4.2a Uploaded résumé files — why this table gets extra scrutiny
 

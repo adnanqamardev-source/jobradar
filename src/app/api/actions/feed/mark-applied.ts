@@ -92,7 +92,8 @@ async function resolveExistingApplicationId(
 
 export async function markApplied(input: unknown): Promise<FeedActionResult & { applicationId?: string }> {
   try {
-    const { jobId, appliedAt, notes, resumeVersionId } = markAppliedRequestSchema.parse(input);
+    const { jobId, appliedAt, nextActionAt, notes, resumeVersionId } =
+      markAppliedRequestSchema.parse(input);
     const user = await requireUser();
     const supabase = await createUserClient(user.accessToken);
 
@@ -122,6 +123,7 @@ export async function markApplied(input: unknown): Promise<FeedActionResult & { 
           job_id: jobId,
           stage: "applied",
           applied_at: appliedAt,
+          next_action_at: nextActionAt ?? null,
           notes: notes ?? null,
           resume_version_id: resumeVersionId ?? null,
           source: "manual",

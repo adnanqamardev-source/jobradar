@@ -99,7 +99,7 @@ export async function runScrapeSource(context: HandlerContext): Promise<Outcome>
       try {
         const canonical = normaliseJob(raw);
         const hash = computeDedupeHash(canonical);
-        const upsertResult = await upsertCanonicalJob(jobWriter, canonical, hash);
+        const upsertResult = await upsertCanonicalJob(jobWriter, canonical, hash, sourceId);
 
         if (upsertResult.ok) {
           counts.inserted++;
