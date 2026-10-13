@@ -309,6 +309,42 @@ export function evaluateGates(job: GateJob, profile: GateProfile): GateResult {
 }
 
 /**
+ * Plain-English rendering of a gate reason (JOB-002: "gated jobs explain *why* they were
+ * filtered out in plain English").
+ *
+ * The reason codes are a data contract — `blocked_company` is stored in
+ * `job_scores.gate_result.reasons` and renaming one invalidates historical rows — so they are
+ * machine-readable by design. That makes them useless on a page: a user who cannot see a job
+ * needs to be told, not to be shown a snake_case enum. This map is the only place the two
+ * meet, and it is a map rather than a function because every reason is a fixed sentence.
+ *
+ * The wording is deliberately about the user's own settings rather than about the gate: "you
+ * told us to avoid this company" is actionable, "blocked_company gate fired" is not.
+ *
+ * Keyed by the **stored code**, not by the `GATE_REASONS` object key, because the value being
+ * looked up is whatever `gate_result.reasons` holds — and a historical row may hold a code
+ * this build has never seen, which `explainGateReasons` falls back to printing verbatim rather
+ * than crashing on.
+ */
+export const GATE_REASON_LABELS: Record<GateReason, string> = {
+  blocked_company: "You asked to avoid this company.",
+  excluded_keyword: "This posting contains a keyword you asked to skip.",
+  work_mode_mismatch: "The way of working does not match the options you chose.",
+  salary_below_floor: "The salary is below the minimum you set.",
+  seniority_over_band: "The seniority is above the band you set.",
+};
+
+/**
+ * One sentence per reason, in the order the gates are evaluated.
+ *
+ * Kept stable and pure so the score breakdown can be snapshot-tested: a reworded string is a
+ * copy change, and a test that fails on it is a deliberate prompt to look at why.
+ */
+export function explainGateReasons(reasons: readonly GateReason[]): string[] {
+  return reasons.map((reason) => GATE_REASON_LABELS[reason] ?? reason);
+}
+
+/**
  * Whether a job should appear in the feed at all.
  *
  * Split out from {@link evaluateGates} because the two obligations are different and

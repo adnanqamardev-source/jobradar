@@ -2404,3 +2404,90 @@ gate cannot pass by swallowing errors.
 ### Gates
 
 `typecheck exit=0` - `lint exit=0` - **920 passed | 0 skipped** (52 files).
+
+---
+
+## Session - 2026-10-14 (6th) · job detail page, score breakdown, sightings
+
+Closes FE-108, FE-109 and JOB-004 — the slice that was queued before the crash intervened, and
+the one that finally renders `job_sightings` from the previous session.
+
+### S-02 by parsing, not scrubbing
+
+The allowlist sanitiser is `src/lib/sanitize/job-description.ts`: it **parses** untrusted
+`description_html` into a node tree and the renderer builds React elements from it.
+`dangerouslySetInnerHTML` appears nowhere in the codebase, so there is no attribute to escape
+and no parser differential to exploit — a bug in the parser can garble text, it cannot execute
+script. This also avoided a dependency, which would have needed asking.
+
+Design points worth recording:
+
+- **Unwrap vs drop.** A disallowed tag loses its wrapper but keeps its text, so `<div>Hello</div>`
+  reads "Hello". `script`, `style`, `iframe`, `object`, `embed`, `template`, `noscript`, `svg`,
+  `math` are dropped **with their content** — unwrapping a `<script>` would print `alert(1)` as
+  body text.
+- **`href` is an allowlist** (`http`, `https`, `mailto`). Relative URLs are refused too: a
+  posting linking to `/api/cron/process` is not a link we want to render.
+- I first wrote a comment claiming the control-character strip was what stopped
+  `java\tscript:`. It was not — that string fails the allowlist anyway. A test then showed the
+  strip was load-bearing for a *different* reason: `"https://acme.example\n/x"` passes the
+  scheme check, and without stripping that newline would land in the `href`. The comment was
+  corrected to say what is actually true, and `normaliseHref` now returns the cleaned string or
+  `null` so the check and the rendered value cannot drift apart.
+
+### `Read more` removes content, `<details>` would not
+
+The cutoff is **3 top-level blocks**, not a character count — a posting whose first paragraph
+is one word would truncate to nothing and hide the control at the same time. Collapsed blocks
+are **removed from the DOM**, not hidden with CSS: content that is visually truncated is still
+read aloud in full by a screen reader, so a long posting would be announced end-to-end while the
+sighted user sees three paragraphs. The score disclosure does the opposite and uses `hidden`,
+which is correct there: a disclosure's content is collapsed, not truncated.
+
+### Three traps, each caught by a tool rather than by reading
+
+1. A regex character class written with a **literal NUL byte** made the file read as binary —
+   `Read`, `Grep` and `Edit` all refused it, and `edit` could not match its own line. Repaired
+   with a script that asserted every step, and rebuilt from `String.fromCharCode`.
+2. `close === -1` on a `RegExp.exec` result: comparing a match array to a number, always false,
+   so `close.index` threw a TypeError on **every unterminated `<script>`** — every truncated
+   scrape, on the page the sanitiser exists to protect. `tsc` named it.
+3. `expect(getByRole(...)).toBeUndefined()` in three tests: `getByRole` **throws** when nothing
+   matches, so those assertions would have passed for the wrong reason. Now `queryBy…`.
+
+Also caught in the tests themselves: `<p>two<strong>three` renders `twothree`, not
+`two three`, because there is no whitespace in the source — my expectation had invented a
+space. And a `listitem` has an **empty accessible name** (names come from the author, not
+contents), so `getByRole("listitem", { name: … })` can never match.
+
+### JOB-004 made two controls into one
+
+"Selecting an alternate updates which URL 'View original' uses" means the link and the list are
+stateful *together*. They are one component: two components would either disagree about which
+posting is current or force the whole page client-side. Every sighting is listed — not just the
+alternates — because N-1 alternates beside a button pointing elsewhere leaves the reader unable
+to tell which row the main link goes to; the current one is marked `aria-current` instead.
+
+An early draft rendered `OriginalSource` twice, producing two "View original" links with
+independent state — exactly the disagreement the merged design exists to prevent.
+
+### Two done-whens I did not meet, and why
+
+- **`score_breakdown_opened` is not fired.** There is no analytics module in this repo:
+  `docs/02` lists an `analytics/` directory that does not exist and `POSTHOG_KEY` is unset. The
+  event has nowhere to go, and adding PostHog is a dependency decision that needs asking rather
+  than a gap to quietly skip.
+- **The LLM rationale (BE-206) is absent**, so `explanation` is whatever the scorer stored.
+
+The card action row (Save/Dismiss/Apply) is also **not** on the detail page. `JobCardActions`
+carries feed-specific state and wiring it here needs the detail page to own that state; it is
+not in JOB-001's done-when list, and inventing it would have widened the slice.
+
+### Gates
+
+`typecheck exit=0` - `lint exit=0` - **989 passed | 0 skipped** (55 files). `pnpm build` green,
+`/jobs/[id]` 2.15 kB (First Load 104 kB — the three client components are plain React, no Radix).
+
+Both distinctive claims were proven to **fail** against the wrong code first: rendering all
+description blocks unconditionally fails the "removes hidden blocks from the DOM" test, and
+reverting `dbTimestampSchema` fails 5 of 6 feed integration tests.
