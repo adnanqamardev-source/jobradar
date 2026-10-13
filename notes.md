@@ -30,6 +30,8 @@ Approaches that didn't work — read before trying something similar.
 | 2026-10-06 | Wrote migration `0007` ending `revoke all on function ... from public; grant execute ... to authenticated;` and believed it restricted the function. Supabase sets `ALTER DEFAULT PRIVILEGES` granting EXECUTE to `anon`/`authenticated`/`service_role` **per-role**, so revoking `PUBLIC` removed a grant that never existed. The ACL came back `{postgres=X/postgres,anon=X/postgres,...}` — anon could call it. A grant statement that silently does nothing is worse than no grant at all, because it reads as a decision. | **Verify grants by reading `pg_proc.proacl` / `has_function_privilege`, never by re-reading the GRANT.** A `revoke ... from public` is not a default-privilege revoke; revoke each role explicitly. Same class as the "guards must be able to fail" rule: assert the effect, not the statement. |
 | 2026-10-14 | Wrote three idempotency tests for the feed actions and confirmed they pass — **against the old, broken code too.** The cause was not a weak assertion but the client double: its `single()` and `maybeSingle()` were the same terminal, so the distinction the tests depended on (PostgREST returns `PGRST116` on zero rows for `single()`, `null` for `maybeSingle()`) did not exist in the test world. Two more double defects hid behind it — `limit()` returned a terminal, so `.limit(1).maybeSingle()` was `TypeError: not a function`, and `is()` only existed one chain level down. | **A stub whose two methods are behaviourally identical makes a real defect invisible** — the new axis of "guards must be able to fail". After writing a regression test, revert the production fix and confirm the test *fails*: `.single()` restored over the `markApplied` upsert is the exact check that exposed it. Keep the double generic (`eq`/`is` any order, terminal decides row-vs-array, `then` so `await` works) instead of hand-rolling a chain per table. |
 
+| 2026-10-14 | Closed the session claiming everything was verified at unit level because "the Docker daemon is down" — and the very first integration test found `job_events` has no `id` column, so `.select("id")` returned `42703` and **every save and dismiss 500'd**. 16 green unit tests sat on top of a completely broken query, because the double answers any column name. | **A stub that accepts any input cannot falsify a claim about that input's validity.** Column names, constraints and SQL semantics belong in `tests/integration/*.db.test.ts` against a live database, not in a double. When a claim is deferred for lack of a database, treat the whole feature as unverified — the double's green is not partial credit. Start Docker Desktop and run `pnpm db:reset` before calling any query-shaped work done. |
+
 ## Broken loops
 
 Repeating the same mistake, or shipping something broken while claiming it worked.
@@ -113,7 +115,11 @@ detail lives in the tables above; here is only the rule and its trigger.
   ratio means the file was rewritten, not edited — which is how the `02a` corruption was caught
   after the fact, and how the 2026-10-06 `docs/07` loss was caught.
 - **Schema-green is not integration-green.** Before relying on an API assumption (price,
-  dimensions, 429 behaviour), make the live call once.
+  dimensions, 429 behaviour), make the live call once. A client double **accepts any input**,
+  so it cannot falsify a claim that the input is valid: `.select("id")` against a table with
+  no `id` column passed 16 green unit tests and failed `42703 undefined_column` on every real
+  request. Column names, constraint behaviour and SQL semantics are asserted against a live
+  database, never against a stub.
 - **Docs' literals are tests' inputs.** If a doc shows an example value, the schema/code
   must accept it — assert it in a test, don't re-read it.
 - **`""` is a value.** `??` and Zod `.optional()` both accept it; `.env` and CI `vars:`

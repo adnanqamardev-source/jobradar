@@ -2105,3 +2105,61 @@ Gates: `typecheck exit=0` · `lint exit=0` · `837 passed | 42 skipped` (+16).
   `supabase db reset` were not run. Every claim above is unit-level; the
   PostgREST behaviour was confirmed against the PostgREST/postgrest-js docs, not
   against this project's stack.
+
+---
+
+## Session — 2026-10-14 (2nd) · live-DB verification, and what it caught
+
+Same day, follow-up session. Docker Desktop was stopped, so the previous
+session closed with everything unverified. Started it, ran `pnpm db:reset` from
+empty (**all 11 migrations apply cleanly**), and wired the integration suites'
+`TEST_SUPABASE_*` variables to the local stack.
+
+**Credential handling:** `supabase status` prints the local anon and
+service-role keys. Those were captured into a variable and consumed in the same
+command; only lengths and the URL were echoed. `supabase` is also not on PATH
+for this shell — the binary is `node_modules/.bin/supabase.cmd`.
+
+### The unit tests could not have caught this
+
+With the database up, all three of the previous session's claims were checked
+against real PostgREST. Two held. **One did not:**
+
+`job_events` has **no `id` column**. Its primary key is the composite
+`(user_id, job_id, event, at)`. Both `saveJob` and `dismissJob` did
+`.select("id")`, which returns **PostgREST `42703 undefined_column`** — so the
+existence check failed, the error was thrown, and **every save and every dismiss
+returned `internal_error`.** Not an edge case: the feature did not work at all.
+
+The client double answered any column name, so 16 green unit tests sat on top of
+a broken query. This is `notes.md`'s "schema-green is not integration-green"
+landing on a new target: **a stub that accepts any input cannot falsify the
+claim that the input is valid.** The unit suite can only prove the *logic*; only
+the database can prove the *query*.
+
+Fix is one token per action (`.select("at")`), plus a guard test that asserts
+`select("id")` on `job_events` fails with `42703`, so the shape cannot regress
+silently.
+
+### What the database did confirm
+
+The two PostgREST assumptions from the previous session, previously taken from
+documentation:
+
+| Claim | Verdict |
+|---|---|
+| `resolution=ignore-duplicates` returns nothing for a conflict | **Confirmed.** Empty response, `maybeSingle()` → `null`, no error. |
+| `.single()` on that response is `PGRST116` | **Confirmed.** Reproduced deliberately. |
+| `maybeSingle()` on two `job_events` rows is `PGRST116` | **Confirmed.** Two inserts succeed because `at` is in the PK. |
+| `.limit(1)` survives the same rows | **Confirmed.** |
+
+End-to-end idempotency is now asserted against real rows: two applies → one
+`applications` row and one `application_events` row; and deleting the history
+row then re-running twice restores exactly one.
+
+Gates: `typecheck exit=0` · `lint exit=0` · `885 passed | 0 skipped` (48
+integration, was 42 — 6 new files/tests in `tests/integration/feed-actions.db.test.ts`).
+
+Note for later sessions: `pnpm test` reports **42 skipped** unless the three
+`TEST_SUPABASE_*` variables are set. A green run with skips is *not* the same
+evidence as a green run with the integration suites executing.

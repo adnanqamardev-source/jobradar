@@ -31,9 +31,11 @@ export async function dismissJob(input: unknown): Promise<FeedActionResult> {
     const user = await requireUser();
     const supabase = await createUserClient(user.accessToken);
 
+    // `.select("at")` — `job_events` has **no `id` column** (composite PK
+    // `(user_id, job_id, event, at)`); see `save-job.ts`.
     const { data: existingRows, error: existingError } = await supabase
       .from("job_events")
-      .select("id")
+      .select("at")
       .eq("user_id", user.id)
       .eq("job_id", jobId)
       .eq("event", "dismiss")

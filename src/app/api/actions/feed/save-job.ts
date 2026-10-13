@@ -44,13 +44,19 @@ export async function saveJob(input: unknown): Promise<FeedActionResult> {
     const user = await requireUser();
     const supabase = await createUserClient(user.accessToken);
 
+    // `.select("at")` — `job_events` has **no `id` column**: its primary key is
+    // the composite `(user_id, job_id, event, at)`. Selecting `"id"` returns
+    // PostgREST `42703 undefined_column`, which would fail *every* save, not
+    // just the duplicate case. Found by `tests/integration/feed-actions.db.test.ts`,
+    // which a client double could never catch: it answered any column name.
+    //
     // `.limit(1)` (not `.maybeSingle()`): job_events can hold several rows for
     // the same (user, job, event) when a double-click straddles the check/insert
     // window — the PK includes `at`, so both inserts succeed. maybeSingle on
     // two rows is a PostgREST error and would turn a clean save into a 500.
     const { data: existingRows, error: existingError } = await supabase
       .from("job_events")
-      .select("id")
+      .select("at")
       .eq("user_id", user.id)
       .eq("job_id", jobId)
       .eq("event", "save")
