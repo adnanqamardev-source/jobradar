@@ -47,7 +47,12 @@ export function JobCard({
 
       {salary != null && <p>{salary}</p>}
 
-      {job.skills.length > 0 && (
+      {/*
+        `skills` is nullable in the database (0001_init.sql:256 — `text[]` with no default),
+        so this is a null check, not a defensive one: a job whose posting named no skills has
+        `skills = NULL`, and the card shows no chip row rather than crashing.
+      */}
+      {job.skills != null && job.skills.length > 0 && (
         <ul aria-label="Skills">
           {job.skills.map((skill) => (
             <li key={skill}>{skill}</li>

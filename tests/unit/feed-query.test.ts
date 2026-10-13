@@ -16,7 +16,10 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { z } from "zod";
 
+import { logger } from "@/lib/logger";
+import { dbTimestampSchema } from "@/types/db";
 import {
   queryFeed,
   encodeFeedCursor,
@@ -41,7 +44,7 @@ interface RecordedCalls {
   limit: unknown[][];
 }
 
-function makeClient(result: { data: unknown[] | null; error?: unknown; count?: number }) {
+function makeClient(result: { data: unknown[] | null; error?: unknown; count?: number | null }) {
   const calls: RecordedCalls = { gt: [], gte: [], eq: [], or: [], textSearch: [], in: [], order: [], limit: [] };
 
   const chain: Record<string, unknown> = {};
@@ -92,9 +95,15 @@ function makeRow(id: string, finalScore: number): FeedRow {
     salary_max: 190000,
     salary_currency: "USD",
     salary_period: "year",
-    posted_at: "2026-10-01T00:00:00.000Z",
-    first_seen_at: "2026-10-01T00:00:00.000Z",
-    last_seen_at: "2026-10-02T00:00:00.000Z",
+    // The format **PostgREST actually returns** for a `timestamptz`: microsecond precision
+    // and a numeric offset, no `Z`. This fixture used to carry `.000Z`, which is the exact
+    // reason 26 green unit tests sat on top of a schema that rejected 100% of real rows —
+    // the double was returning the timestamp format the author imagined. Line 286's
+    // expectation is a literal from the test's own input, not from this row, so it is
+    // unaffected. `tests/integration/feed-query.db.test.ts` pins the real shape.
+    posted_at: "2026-10-01T00:00:00.000000+00:00",
+    first_seen_at: "2026-10-01T00:00:00.000000+00:00",
+    last_seen_at: "2026-10-02T00:00:00.000000+00:00",
     sighting_count: 1,
     skills: ["react", "typescript"],
     final_score: finalScore,
@@ -362,5 +371,91 @@ describe("queryFeed — row validation", () => {
     const client = makeClient({ data: [{ id: "not-a-uuid" }], count: 1 });
 
     await expect(queryFeed(client as never, baseParams)).rejects.toThrow();
+  });
+
+  // -------------------------------------------------------------------------
+  // PostgREST failures (the crash that shipped)
+  // -------------------------------------------------------------------------
+
+  it("returns a typed error instead of throwing when PostgREST fails", async () => {
+    // The regression this file exists beside. `queryFeed` rethrew the raw PostgREST error,
+    // and `/dashboard` only handled `invalid_cursor` — so a `42703 undefined_column` (a
+    // migration never pushed to the database the app points at) escaped the server
+    // component and rendered Next's production message: "An error occurred in the Server
+    // Components render", with a digest and nothing else.
+    const client = makeClient({
+      data: null,
+      count: null,
+      error: {
+        code: "42703",
+        message: 'column v_ranked_jobs.first_seen_at does not exist',
+        details: null,
+        hint: null,
+      },
+    });
+
+    const result = await queryFeed(client as never, baseParams);
+
+    expect(result).toEqual({ error: "query_failed" });
+  });
+
+  it("logs the PostgREST code so the cause is not a bare digest", async () => {
+    // The server-side log is the only place `code`/`details`/`hint` appear; the client gets
+    // a code (docs/03 §5.3). `logger` redacts, so this cannot print a key.
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      const client = makeClient({
+        data: null,
+        count: null,
+        error: { code: "PGRST205", message: "Could not find the table", details: null, hint: null },
+      });
+
+      await queryFeed(client as never, baseParams);
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      const [, meta] = errorSpy.mock.calls[0] ?? [];
+      expect(meta).toMatchObject({ code: "PGRST205", message: "Could not find the table" });
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("logs which field failed when a row does not validate", async () => {
+    // A row mismatch still throws (it is a bug in this code, and the error boundary plus
+    // Sentry should see it), but the cause is no longer only a digest.
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      const client = makeClient({ data: [{ ...makeRow("3f2a9c1e-0000-4000-8000-000000000001", 78.42), id: "not-a-uuid" }], count: 1 });
+
+      await expect(queryFeed(client as never, baseParams)).rejects.toThrow();
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      const [message, meta] = errorSpy.mock.calls[0] ?? [];
+      expect(message).toBe("feed row failed validation");
+      expect(String((meta as { issues?: string })?.issues)).toContain("id");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("accepts a row whose skills column is NULL", async () => {
+    // `jobs.skills` is `text[]` with no default (0001_init.sql:256). The schema demanded an
+    // array, so the most common real-world row shape — a job ingested before the skill
+    // matcher existed, or from a posting that named no skills — was the one that crashed.
+    const client = makeClient({ data: [{ ...makeRow("3f2a9c1e-0000-4000-8000-000000000001", 78.42), skills: null }], count: 1 });
+
+    const result = await queryFeed(client as never, baseParams);
+
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    expect(result.jobs[0]?.skills).toBeNull();
+  });
+
+  it("accepts the timestamp format PostgREST returns", () => {
+    // `makeRow` now carries `…+00:00` with microseconds, so merely reaching this assertion
+    // is the proof; the explicit parse states the contract so a future fixture change that
+    // reintroduces `.000Z` fails here rather than silently hiding the bug again.
+    const row = makeRow("3f2a9c1e-0000-4000-8000-000000000001", 78.42);
+    expect(z.string().datetime().safeParse(row.first_seen_at).success).toBe(false);
+    expect(dbTimestampSchema.safeParse(row.first_seen_at).success).toBe(true);
   });
 });

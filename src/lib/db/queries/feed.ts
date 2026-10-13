@@ -33,7 +33,9 @@
 import { z } from "zod";
 
 import type { SupabaseClient } from "@/lib/db/user-client";
+import { dbTimestampSchema } from "@/types/db";
 import { feedQueryRequestSchema } from "@/types/api";
+import { logger } from "@/lib/logger";
 
 /** Jobs below this score never enter the feed. See the comment above. */
 export const MIN_FEED_SCORE = 60;
@@ -72,17 +74,31 @@ export const feedRowSchema = z.object({
   salary_max: z.number().nullable(),
   salary_currency: z.string().length(3).nullable(),
   salary_period: z.string().nullable(),
-  posted_at: z.string().datetime().nullable(),
-  first_seen_at: z.string().datetime(),
-  last_seen_at: z.string().datetime(),
+  posted_at: dbTimestampSchema.nullable(),
+  first_seen_at: dbTimestampSchema,
+  last_seen_at: dbTimestampSchema,
   sighting_count: z.number(),
-  skills: z.array(z.string()),
+  /**
+   * `jobs.skills` is `text[]` with **no default and no NOT NULL** (0001_init.sql:256), so
+   * NULL is the normal state for a job ingested before the skill matcher existed, or from a
+   * source whose posting named no skills. It was declared `z.array(z.string())`, which made
+   * every such job a validation failure and took the whole page down — see the note on
+   * `dbTimestampSchema` for why the unit tests could not see it.
+   */
+  skills: z.array(z.string()).nullable(),
+  /**
+   * Non-nullable on purpose. The view LEFT JOINs `job_scores`, so an unscored job *is* NULL
+   * in the view — but the query's `.gte("final_score", MIN_FEED_SCORE)` drops NULLs in SQL,
+   * so a null here can only mean that predicate stopped applying. An earlier comment here
+   * claimed this was nullable "so one unexpected null must not fail the whole page" — that
+   * tolerance was illusory: `scoreBand(null)` is `NaN` and renders a broken meter, so the
+   * strict schema fails loudly at the boundary where the bug actually is.
+   */
   final_score: z.number(),
   rule_score: z.number().nullable(),
   semantic_score: z.number().nullable(),
-  // Nullable because the view left-joins job_scores: a row without a score
-  // (filtered out by MIN_FEED_SCORE in practice) yields NULL, and one
-  // unexpected null must not fail the whole page's validation.
+  // Nullable because a gated job is still written with a row (final_score 0 + gate_result);
+  // `breakdown` is always populated for scored jobs (C3), but one null must not fail the page.
   breakdown: z.array(breakdownEntrySchema).nullable(),
   explanation: z.string().nullable(),
   saved: z.boolean(),
@@ -195,19 +211,38 @@ export interface FeedQueryResult {
 }
 
 /**
+ * Why a feed read produced nothing renderable.
+ *
+ * `invalid_cursor` is the caller's fault (a truncated link). `query_failed` is ours or the
+ * database's — a missing migration, a policy regression, a dropped connection. The page
+ * renders a different message for each, because telling a user their link is stale when the
+ * database is unreachable sends them to fix the wrong thing.
+ */
+export type FeedQueryError = "invalid_cursor" | "query_failed";
+
+/**
  * Query the ranked feed for the caller.
  *
  * The client must be the caller's RLS-scoped client (`createUserClient`) — the
  * view's per-user columns and the `job_scores` join are only correct under the
  * caller's JWT.
  *
- * @returns The page of rows (already validated), the cursor for the next page,
- *          or `null` when the cursor does not decode (caller should 400).
+ * @returns The page of rows (already validated), the cursor for the next page, or a typed
+ *          error the page renders as an explicit state.
+ *
+ * ## Why this returns instead of throwing
+ *
+ * It used to rethrow the raw PostgREST error. `/dashboard` only handled `invalid_cursor`, so
+ * any other failure — including `42703 undefined_column` from a migration that was never
+ * pushed to the database the app is actually pointed at — propagated out of the server
+ * component and produced Next's production message, *"An error occurred in the Server
+ * Components render"*, with a digest and no other symptom. The raw details stay server-side
+ * in the log; the client gets a code (docs/03 §5.3).
  */
 export async function queryFeed(
   client: SupabaseClient,
   params: FeedQueryParams,
-): Promise<FeedQueryResult | { error: "invalid_cursor" }> {
+): Promise<FeedQueryResult | { error: FeedQueryError }> {
   const cursor = decodeFeedCursor(params.cursor);
   if (params.cursor != null && cursor === null) {
     return { error: "invalid_cursor" };
@@ -270,13 +305,34 @@ export async function queryFeed(
 
   const { data, error, count } = await query;
   if (error) {
-    // PostgREST errors are mapped at the action boundary; rethrow the raw error
-    // here so the caller decides the code (docs/03 §5.3 — raw `details` never
-    // reaches the client).
-    throw error;
+    // The server-side log is the only place the PostgREST code, hint and details appear.
+    // `logger` redacts, so a failure cannot print a key or a bearer token.
+    logger.error("feed query failed", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      search: params.search ?? null,
+    });
+    return { error: "query_failed" };
   }
 
-  const rows = feedRowSchema.array().parse(data ?? []);
+  let rows: FeedRow[];
+  try {
+    rows = feedRowSchema.array().parse(data ?? []);
+  } catch (err) {
+    // Deliberately still throws, unlike a PostgREST error: a row that does not match the
+    // schema is a bug in *this* code (a renamed column, a new nullability), not a transient
+    // fault, and it should reach the error boundary and Sentry rather than be rendered as a
+    // friendly empty state. What changes is that the cause is logged here — previously the
+    // only trace was Next's production digest, which says nothing about which field failed.
+    const issues =
+      err instanceof z.ZodError
+        ? err.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")
+        : String(err);
+    logger.error("feed row failed validation", { issues });
+    throw err;
+  }
   const hasMore = rows.length > params.limit;
   const page = hasMore ? rows.slice(0, params.limit) : rows;
   const last = page[page.length - 1];

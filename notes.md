@@ -32,6 +32,7 @@ Approaches that didn't work — read before trying something similar.
 
 | 2026-10-14 | Closed the session claiming everything was verified at unit level because "the Docker daemon is down" — and the very first integration test found `job_events` has no `id` column, so `.select("id")` returned `42703` and **every save and dismiss 500'd**. 16 green unit tests sat on top of a completely broken query, because the double answers any column name. | **A stub that accepts any input cannot falsify a claim about that input's validity.** Column names, constraints and SQL semantics belong in `tests/integration/*.db.test.ts` against a live database, not in a double. When a claim is deferred for lack of a database, treat the whole feature as unverified — the double's green is not partial credit. Start Docker Desktop and run `pnpm db:reset` before calling any query-shaped work done. |
 | 2026-10-14 | Hours after that fix, wrote an integration test seeding a `sources` row with `sources.slug` (that column is on `companies`) and `kind: "greenhouse"` (the enum is `api_greenhouse`). Both from memory of a similar table, both caught only by Postgres. | **Read the DDL before writing a fixture against a table you have not just read** — same failure as `job_events.id`, and the second time in one day. The lesson is not "tests are good", it is that *the database is the only authority on its own shape*, so a fixture is a schema assertion in disguise. `pg_policies` is not PostgREST-exposed either: assert the RLS outcome with a signed-in client, not the policy catalog. |
+| 2026-10-14 | Shipped the feed with 26 green unit tests; it crashed on **100%** of real rows. `feedRowSchema` used `z.string().datetime()`, which rejects PostgREST's `timestamptz` output (`…+00:00`, 1–6 fractional digits). Same session also declared `skills` non-null on a nullable `text[]`, and `queryFeed` rethrew PostgREST errors into a server component that only handled one error case — so the whole thing surfaced as *"An error occurred in the Server Components render"*, a digest and nothing else. The user's browser console was the only symptom; I had "verified" it three sessions running. | **A client double returns the fixtures you hand it, so it can only ever confirm your assumptions.** 26 green tests proved the query *shape*; only the database proves the *values*. Any schema that validates a row coming back out of Postgres must be exercised by a `*.db.test.ts` running the real schema over real rows — and the double's fixtures must copy the format the database actually emits (`+00:00`, not `.000Z`), because otherwise the stub silently vouches for the wrong format. Second lesson: **an unhandled throw in a server component is a silent total outage.** Read paths return a typed error the page renders; they do not rethrow, because "digest only" is the most expensive possible failure mode. |
 
 ## Broken loops
 
@@ -121,6 +122,19 @@ detail lives in the tables above; here is only the rule and its trigger.
   no `id` column passed 16 green unit tests and failed `42703 undefined_column` on every real
   request. Column names, constraint behaviour and SQL semantics are asserted against a live
   database, never against a stub.
+- **A double also vouches for the format you imagine.** Trigger: any schema validating a value
+  that comes back out of Postgres. Run: `pnpm vitest run tests/integration/<area>.db.test.ts`
+  with the production schema over production-shaped rows. Pointer: `z.string().datetime()`
+  rejects PostgREST's `timestamptz` (`…+00:00`, 1–6 fractional digits — Postgres strips
+  trailing zeros); use `dbTimestampSchema` from `src/types/db.ts`, and copy the *real* format
+  into unit fixtures so the double stops agreeing with itself. 26 green feed tests once hid a
+  100%-failure row schema behind `.000Z` fixtures.
+- **Never let a read path rethrow into a server component.** Trigger: `throw error` on a
+  PostgREST failure, or an error branch no page handles. Run: `pnpm typecheck`, then read the
+  page for a branch that renders the typed error. Pointer: an unhandled throw there is a
+  total outage whose only symptom is Next's *"An error occurred in the Server Components
+  render"* plus a digest — so return `{ error }`, `logger.error` the real cause, and let the
+  page say which thing failed.
 - **Docs' literals are tests' inputs.** If a doc shows an example value, the schema/code
   must accept it — assert it in a test, don't re-read it.
 - **`""` is a value.** `??` and Zod `.optional()` both accept it; `.env` and CI `vars:`

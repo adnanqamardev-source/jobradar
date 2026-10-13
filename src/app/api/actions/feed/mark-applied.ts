@@ -45,6 +45,7 @@ import { AppError } from "@/lib/errors";
 import { requireUser } from "@/lib/auth/require-user";
 import { createUserClient } from "@/lib/db/user-client";
 import { markAppliedRequestSchema } from "@/types/api";
+import { dbTimestampSchema } from "@/types/db";
 import type { FeedActionResult } from "./save-job";
 
 /**
@@ -62,11 +63,18 @@ const jobSnapshotSourceSchema = z.object({
   salary_max: z.number().nullable(),
   salary_currency: z.string().nullable(),
   salary_period: z.string().nullable(),
-  posted_at: z.string().datetime().nullable(),
+  // Both of these were wrong in the same way as the feed row schema, and the second one is
+  // a live bug rather than a latent one: `jobs.posted_at` is a `timestamptz` (PostgREST emits
+  // `…+00:00`, which `.datetime()` rejects) and `jobs.skills` is a nullable `text[]`. Marking
+  // applied a job ingested without skills failed snapshot validation and returned
+  // `internal_error`. `dbTimestampSchema` is the read-from-Postgres form; see types/db.ts.
+  posted_at: dbTimestampSchema.nullable(),
   seniority: z.string(),
   employment_type: z.string(),
   work_mode: z.string(),
-  skills: z.array(z.string()),
+  // Faithful to the column: the schema reports what the database holds rather than
+  // normalising it, so the tracker (FE-111/112) must read `skills === null` as "no skills".
+  skills: z.array(z.string()).nullable(),
   source_url: z.string(),
 });
 

@@ -25,13 +25,15 @@
 import { z } from "zod";
 
 import type { SupabaseClient } from "@/lib/db/user-client";
+import { dbTimestampSchema } from "@/types/db";
 
 /** One row of `job_sightings` as PostgREST returns it. */
 export const jobSightingSchema = z.object({
   source_id: z.string().uuid().nullable(),
   source_url: z.string(),
-  first_seen_at: z.string(),
-  last_seen_at: z.string(),
+  // `timestamptz` read back from Postgres, which emits `…+00:00`. See `dbTimestampSchema`.
+  first_seen_at: dbTimestampSchema,
+  last_seen_at: dbTimestampSchema,
   sighting_count: z.number(),
 });
 

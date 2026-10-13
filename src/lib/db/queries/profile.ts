@@ -19,7 +19,7 @@
 import { z } from "zod";
 
 import type { SupabaseClient } from "@/lib/db/user-client";
-import { planTierSchema } from "@/types/db";
+import { planTierSchema, dbTimestampSchema } from "@/types/db";
 
 /**
  * The projection `/dashboard` needs. Zod first, type derived — docs/06 §8.1. An earlier hand-written
@@ -35,8 +35,12 @@ export const profileSummarySchema = z.object({
    * D7 — the "new since last visit" diff point (FED-004). Read here so the feed
    * query does not need a second round-trip; written by the interstitial that
    * closes the onboarding flow and by the feed view itself.
+   *
+   * `dbTimestampSchema`, not `.datetime()`: this reads a `timestamptz` back out of
+   * Postgres, which serialises it with an offset (`…+00:00`). The strict form
+   * rejects every real row — see the note on `dbTimestampSchema`.
    */
-  last_seen_feed_at: z.string().datetime().nullable(),
+  last_seen_feed_at: dbTimestampSchema.nullable(),
 });
 
 export type ProfileSummary = z.infer<typeof profileSummarySchema>;

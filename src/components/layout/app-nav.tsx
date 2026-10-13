@@ -22,11 +22,26 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
+/**
+ * The product's navigation, in order. `built: false` marks a destination that is specified
+ * in docs/05c but has no route yet — `/applications` is FE-111/112/113, `/saved-searches`
+ * is FE-115, `/settings` is FE-116.
+ *
+ * The links stay, because the nav is the product's structure and Phase 2 is functional, not
+ * cosmetic: removing them would hide work that is planned and specified. What is suppressed
+ * is the *prefetch*. `<Link>` prefetches its RSC payload on viewport entry, so three
+ * not-yet-built routes produced three 404s in the browser console on every page load —
+ * noise that trains you to ignore the console, which is exactly how the real dashboard crash
+ * hid in plain sight. `prefetch={false}` keeps the link and drops the request; the 404 still
+ * happens when someone actually clicks, which is honest.
+ *
+ * Drop the flag as each route lands — `prefetch` is not a permanent property of a nav item.
+ */
 const NAV_ITEMS = [
-  { href: "/dashboard", label: "Feed" },
-  { href: "/applications", label: "Applications" },
-  { href: "/saved-searches", label: "Saved Searches" },
-  { href: "/settings", label: "Settings" },
+  { href: "/dashboard", label: "Feed", built: true },
+  { href: "/applications", label: "Applications", built: false },
+  { href: "/saved-searches", label: "Saved Searches", built: false },
+  { href: "/settings", label: "Settings", built: false },
 ] as const;
 
 export function AppNav() {
@@ -64,6 +79,7 @@ export function AppNav() {
             <li key={item.href}>
               <Link
                 href={item.href}
+                prefetch={item.built}
                 aria-current={isActive(item.href) ? "page" : undefined}
               >
                 {item.label}

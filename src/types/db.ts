@@ -14,6 +14,46 @@
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
+// Timestamps
+// ---------------------------------------------------------------------------
+
+/**
+ * A `timestamptz` as **PostgREST returns it**, for schemas that validate a row read
+ * back out of the database.
+ *
+ * ## Why this exists (and why it is not `z.string().datetime()`)
+ *
+ * Postgres serialises `timestamptz` with a numeric offset rather than `Z`, and with
+ * microsecond precision: `2026-10-13T21:49:59.149163+00:00`. `z.string().datetime()` with no
+ * options requires a literal `Z`, so it **rejects every real row**:
+ *
+ * ```
+ * 2026-10-13T21:49:59.149163+00:00   plain=n   offset=true  -> Y
+ * 2026-10-13T21:49:59.000Z            plain=Y   offset=true  -> Y
+ * 2026-10-13                         plain=n   offset=true  -> n
+ * ```
+ *
+ * `feedRowSchema` shipped with `plain` and therefore threw on 100% of rows — the
+ * dashboard crashed with a digest-only "An error occurred in the Server Components
+ * render" and no other symptom. The 26 feed unit tests could not catch it because their
+ * fake client returns hand-written `.000Z` strings; the stub answers with the format the
+ * author imagined, not the format the database produces. See
+ * `tests/integration/feed-query.db.test.ts`, which runs this schema over real rows.
+ *
+ * ## Scope
+ *
+ * For **rows read from Postgres**. Input schemas (`types/api.ts`) keep the strict form:
+ * they receive ISO strings our own code produced with `toISOString()`, and accepting an
+ * offset there would loosen validation for no gain.
+ *
+ * `precision` is deliberately unset. Postgres emits **up to** microseconds and strips
+ * trailing zeros, so the fractional width varies per row — measured on the local stack:
+ * `…:07.748420+00:00` comes back as `…:07.74842+00:00` (5 digits) and `…:14.217536+00:00`
+ * as 6. Pinning `precision: 3` would reject most real rows.
+ */
+export const dbTimestampSchema = z.string().datetime({ offset: true });
+
+// ---------------------------------------------------------------------------
 // Enum types (mirror docs/02a-schema.md §5.2)
 // ---------------------------------------------------------------------------
 

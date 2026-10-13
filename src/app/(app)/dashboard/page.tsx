@@ -114,12 +114,24 @@ export default async function DashboardPage({
   }
 
   if ("error" in result) {
+    // The cursor branch keeps its own copy: a truncated link is the user's to fix and
+    // retrying without it works. `query_failed` is a server or database fault — telling
+    // someone their link is stale when the query is unreachable sends them to fix the
+    // wrong thing, and this is the branch that would otherwise have been an unhandled
+    // Server Components crash.
+    const staleLink = result.error === "invalid_cursor";
     return (
       <>
         <h1>Your feed</h1>
-        <section aria-labelledby="bad-cursor">
-          <h2 id="bad-cursor">That page link is no longer valid</h2>
-          <p>The pagination link could not be decoded — it may have been truncated.</p>
+        <section aria-labelledby={staleLink ? "bad-cursor" : "feed-unavailable"}>
+          <h2 id={staleLink ? "bad-cursor" : "feed-unavailable"}>
+            {staleLink ? "That page link is no longer valid" : "We could not load your feed"}
+          </h2>
+          <p>
+            {staleLink
+              ? "The pagination link could not be decoded — it may have been truncated."
+              : "Something on our side stopped the feed query. This is not a problem with your profile or your filters."}
+          </p>
           <p>
             <Link href="/dashboard">Back to your feed</Link>
           </p>

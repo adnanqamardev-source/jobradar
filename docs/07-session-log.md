@@ -2239,5 +2239,94 @@ assumption, and DS-012 should see it.
 green.
 
 `docs/02a-schema.md` was edited with a latin1 in / latin1 out script (it is still
-not valid UTF-8, which is the proof it was lossless) and the diff is +18/-0 —
+not valid UTF-8, which is the proof it was lossless) and the diff is +18/-0 -
 purely additive, as the docs rule requires.
+
+---
+
+## Session - 2026-10-14 (4th) · the feed was crashing on every row
+
+Started as "plan and implement the next phase". The user pasted a browser console
+instead, and it was worth more than any plan I had queued.
+
+### What the console actually contained
+
+Three unrelated things, only one of them a defect:
+
+| Line | Verdict |
+|---|---|
+| `applications` / `saved-searches` / `settings` -> 404 | Next prefetching nav links to routes that do not exist yet (FE-111/115/116) |
+| CSP `unsafe-eval` from `content.js` | **A browser extension** (`chrome-extension://102fb8a4-...`), not this app |
+| "An error occurred in the Server Components render" + digest | Real, and total |
+
+### Two independent causes behind the crash
+
+**The remote database was two migrations behind.** Probed `diuwzagrpqhlutbqdvrs`
+read-only: `v_ranked_jobs.remote_scope` (0003) returned 200, while `jobs.search_vector`,
+`v_ranked_jobs.first_seen_at` and `v_ranked_jobs.saved` (all 0011) returned **42703**
+and `job_sightings` (0012) returned **PGRST205**. The project was at **0010**. The feed
+code selects 0011 columns, so PostgREST failed on every request.
+
+**And the code would have crashed anyway once 0011 landed.** Ran the production
+`feedRowSchema` against real rows from the local stack: **all three rows failed.**
+
+```
+first_seen_at: Invalid datetime (got "2026-10-13T21:49:59.149163+00:00")
+last_seen_at:   Invalid datetime (got "2026-10-13T21:49:59.149163+00:00")
+skills:         Expected array, received null (got null)
+final_score:    Expected number, received null (got null)
+```
+
+Three separate schema/reality mismatches:
+
+1. `z.string().datetime()` requires a literal `Z`; PostgREST returns a `timestamptz` as
+   `…+00:00`, with **1-6** fractional digits because Postgres strips trailing zeros
+   (`.748420` comes back as `.74842`). My own first attempt at pinning this asserted
+   exactly 6 digits and the test caught me.
+2. `jobs.skills` is `text[]` with no default and no NOT NULL (0001:256), so NULL is the
+   normal state for a job ingested before the skill matcher existed.
+3. `final_score` was *documented* as nullable-but-tolerated while the type said
+   `z.number()`. The tolerance was illusory - `scoreBand(null)` is `NaN`. It is unreachable
+   anyway because `.gte("final_score", 60)` drops NULLs in SQL, which is now pinned by a test.
+
+`queryFeed` then **rethrew** PostgREST errors while `/dashboard` only handled
+`invalid_cursor`, so the throw escaped the server component and became Next's production
+message: a digest and nothing else.
+
+### Why 26 green unit tests missed all of it
+
+The client double returns hand-written `.000Z` strings. **The stub answers with the
+format the author imagined, not the format the database emits.** That is the fourth
+instance in this repo of a double agreeing with whatever it is handed - after
+`job_events.id`, `sources.slug`, and `single()`/`maybeSingle()` being one method.
+
+So the new `tests/integration/feed-query.db.test.ts` (6 tests) runs the **production**
+schema and the **production** `queryFeed` over real rows, with a real signed-in JWT. The
+unit fixture was also changed to carry `+00:00`, so all 30 feed unit tests now exercise the
+real format. Both were verified to **fail** against the old code first - 5 of 6 integration
+tests fail with `Invalid datetime` when `dbTimestampSchema` is reverted to the strict form.
+
+One test caught a fake I had just written: a hand-rolled chain inside a `*.db.test.ts`,
+arguing for the file's own thesis. Deleted it; the unit test already covered that branch.
+
+### Also
+
+- `dbTimestampSchema` in `src/types/db.ts`: one shared read-from-Postgres form, `precision`
+  deliberately unset. `profile.ts`, `sightings.ts` and the `markApplied` snapshot had the
+  same landmine armed; `markApplied`'s `skills` was a **live** bug - marking applied a job
+  with no skills would have returned `internal_error`.
+- `prefetch={false}` on the three unbuilt nav routes. Console noise trains you to ignore
+  the console, which is precisely how this crash hid in plain sight.
+- **Blocked, and I did not work around it:** `supabase db push` needs
+  `SUPABASE_ACCESS_TOKEN`, and the CLI here has none. The push is additive and approved,
+  but it needs a credential I will not ask for in a transcript. Command for the user:
+  `pnpm supabase db push` (after `supabase login`).
+
+### Gates
+
+`typecheck exit=0` - `lint exit=0` - **917 passed | 0 skipped** (51 files).
+
+`types/resume.ts` carries the same `z.string().datetime()` pattern on `createdAt` /
+`updatedAt` / `extractedAt`, but that schema is camelCase and not yet wired to a PostgREST
+read, so it is reported here rather than churned: when FE-119 wires it, it needs
+`dbTimestampSchema` too.
