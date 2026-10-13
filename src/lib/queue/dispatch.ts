@@ -6,19 +6,33 @@ import { logger } from "@/lib/logger";
 import type { Outcome } from "@/lib/queue/plan";
 import { runRescoreProfile } from "@/lib/queue/handlers/rescore-profile";
 import { createSupabaseRescoreStore } from "@/lib/queue/handlers/rescore-store";
-import { runScrapeSource } from "@/lib/queue/handlers/scrape-source";
+import { runIngestSource } from "@/lib/queue/handlers/ingest-source";
 import { createAdminClient } from "@/lib/db/admin";
+import { taskKindSchema } from "@/types/db";
 
-export const TASK_KINDS = [
-  "scrape_source",
-  "score_jobs",
-  "rescore_profile",
-  "send_digest",
-  "generate_rationale",
-  "embed_jobs",
-  "freshness_sweep",
-] as const;
-
+/**
+ * The kinds this dispatcher can handle.
+ *
+ * Sourced from `taskKindSchema`, which mirrors the Postgres `task_kind` enum (0001_init.sql:51),
+ * so **a kind the database would reject is a compile error here rather than a runtime 400**.
+ *
+ * This list used to be hand-written, and had drifted in both directions:
+ *
+ * | | present only in the old list | present only in the enum |
+ * |---|---|---|
+ * | kinds | `scrape_source`, `generate_rationale`, `embed_jobs`, `freshness_sweep` | `ingest_source`, `account_export`, `cleanup` |
+ *
+ * `scrape_source` is the one that actually bit: `/api/cron/enqueue` inserted it, the enum
+ * rejected it, and all nine sources failed with
+ * `invalid input value for enum task_kind: "scrape_source"` — so ingestion had never enqueued
+ * a task. Deriving the list from the schema makes that class of drift impossible, and
+ * `tests/unit/queue-kind-vocabulary.test.ts` pins the two against each other explicitly.
+ *
+ * `TASK_KINDS` includes kinds with **no handler** (`account_export`, `cleanup`). That is
+ * deliberate: `HANDLERS` is a `Partial`, and a task of an unimplemented kind gets a clear
+ * "no handler registered" failure rather than being indistinguishable from a malformed task.
+ */
+export const TASK_KINDS = taskKindSchema.options;
 export type TaskKind = (typeof TASK_KINDS)[number];
 
 export interface DispatchTask {
@@ -72,8 +86,12 @@ export const HANDLERS: HandlerRegistry = {
     return { ok: true };
   },
 
-  scrape_source: async (context) => {
-    return await runScrapeSource(context);
+  // Keyed by `ingest_source`: the Postgres `task_kind` enum's name for this work, per
+  // 0001_init.sql:51 and docs/02 §5.9. `HandlerRegistry` is keyed by the schema's union, so
+  // writing `scrape_source` here is now a compile error instead of a task that can never be
+  // enqueued.
+  ingest_source: async (context) => {
+    return await runIngestSource(context);
   },
 };
 

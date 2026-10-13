@@ -33,7 +33,7 @@
  */
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 const URL = process.env.TEST_SUPABASE_URL;
 const SERVICE_ROLE = process.env.TEST_SUPABASE_SERVICE_ROLE;
@@ -99,8 +99,16 @@ const PROBES: Probe[] = [
 ];
 
 suite(`schema drift against ${IS_LOCAL ? "the local stack" : "the configured database"}`, () => {
-  const admin = createClient(URL!, SERVICE_ROLE!, {
-    auth: { persistSession: false, autoRefreshToken: false },
+  // Built in `beforeAll`, not in the suite body. A `describe.skip` body still *executes*, so
+  // calling `createClient(undefined!, …)` at describe time threw "supabaseUrl is required"
+  // instead of skipping cleanly — a suite that errors when unconfigured is worse than one that
+  // skips, because it looks like a real failure in `pnpm test` with no database.
+  let admin: SupabaseClient;
+
+  beforeAll(() => {
+    admin = createClient(URL!, SERVICE_ROLE!, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
   });
 
   it("has every table, view and column the migrations create", async () => {

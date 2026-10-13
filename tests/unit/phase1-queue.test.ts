@@ -244,7 +244,7 @@ describe("planEnqueue", () => {
 function task(overrides: Partial<DispatchTask> = {}): DispatchTask {
   return {
     id: "task-1",
-    kind: "scrape_source",
+    kind: "ingest_source",
     payload: { source_id: "src-1" },
     ...overrides,
   };
@@ -269,8 +269,8 @@ describe("dispatch", () => {
   });
 
   it("has no handler for any kind the enqueue cycle can produce", () => {
-    // `scrape_source` is what `planEnqueue` plans.
-    expect(hasHandler("scrape_source")).toBe(true);
+    // `ingest_source` is what `/api/cron/enqueue` plans.
+    expect(hasHandler("ingest_source")).toBe(true);
   });
 
   it("reports a failure when the profile does not exist", async () => {
@@ -305,7 +305,7 @@ describe("dispatch", () => {
 
   it("lists its registered kinds", () => {
     expect(registeredKinds()).toContain("rescore_profile");
-    expect(registeredKinds()).toContain("scrape_source");
+    expect(registeredKinds()).toContain("ingest_source");
   });
 });
 

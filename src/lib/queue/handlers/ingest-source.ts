@@ -1,5 +1,5 @@
 /**
- * scrape-source.ts — the `scrape_source` task handler (ING-008, ING-011).
+ * ingest-source.ts - the `ingest_source` task handler (ING-008, ING-011).
  */
 
 import { createAdminClient } from "@/lib/db/admin";
@@ -13,13 +13,13 @@ import type { SourceKind } from "@/types/db";
 
 installBuiltInConnectors();
 
-export async function runScrapeSource(context: HandlerContext): Promise<Outcome> {
+export async function runIngestSource(context: HandlerContext): Promise<Outcome> {
   const { task, now, signal } = context;
   const payload = task.payload;
   const sourceId = typeof payload.source_id === "string" ? payload.source_id : null;
 
   if (!sourceId) {
-    return { ok: false, error: "scrape_source: payload.source_id is missing or not a string" };
+    return { ok: false, error: "ingest_source: payload.source_id is missing or not a string" };
   }
 
   const supabase = createAdminClient();
@@ -33,7 +33,7 @@ export async function runScrapeSource(context: HandlerContext): Promise<Outcome>
     .single();
 
   if (sourceResult.error || !sourceResult.data) {
-    return { ok: false, error: `scrape_source: source ${sourceId} not found` };
+    return { ok: false, error: `ingest_source: source ${sourceId} not found` };
   }
 
   const source = sourceResult.data as Record<string, unknown>;

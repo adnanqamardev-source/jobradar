@@ -2491,3 +2491,88 @@ not in JOB-001's done-when list, and inventing it would have widened the slice.
 Both distinctive claims were proven to **fail** against the wrong code first: rendering all
 description blocks unconditionally fails the "removes hidden blocks from the DOM" test, and
 reverting `dbTimestampSchema` fails 5 of 6 feed integration tests.
+
+---
+
+## Session - 2026-10-14 (7th) · "is the scraper working?" — no, and it never had been
+
+The remote was reconciled (`db reset --linked`, twelve migrations applied, history table now
+matching `0001`–`0012`), and the natural next question was whether ingestion had ever actually
+run. It had not. **`jobs` was 0, `scrape_runs` was 0, `task_queue` was 0** against a database
+with nine enabled, due sources.
+
+### One string, three vocabularies
+
+`task_queue.kind` had three independent definitions:
+
+| | values |
+|---|---|
+| Postgres enum `task_kind` (0001:51) | `ingest_source`, `score_jobs`, `send_digest`, `rescore_profile`, `account_export`, `cleanup` |
+| `taskKindSchema` (types/db.ts:111) | the same six |
+| `TASK_KINDS` (dispatch.ts) | `scrape_source`, `score_jobs`, `rescore_profile`, `send_digest`, `generate_rationale`, `embed_jobs`, `freshness_sweep` |
+
+Four dispatch kinds cannot be enqueued because the enum has never had them; three enum kinds
+had no handler. And `/api/cron/enqueue` inserted a hardcoded `kind: "scrape_source"` through
+**`kind: row.kind as never`** — a cast that discards the compiler's only opinion, on a column
+the database constrains with an enum.
+
+A live call, which is what finally made it visible:
+
+```
+GET /api/cron/enqueue -> {"ok":false,"due":9,"enqueued":0,
+  "failed":[{"reason":"invalid input value for enum task_kind: \"scrape_source\""} x9]}
+```
+
+`docs/02` §5.9 and §7 both say `ingest_source`, and §7 even lists the handler file as
+`handlers/ingest_source.ts`. The code was the thing that was wrong, so **no migration was
+needed**: the handler is now `handlers/ingest-source.ts`, the registry key is `ingest_source`,
+`row.kind` is typed `TaskKind` (so the same mistake is a compile error), and `TASK_KINDS` is
+derived from `taskKindSchema.options` instead of a hand-written list.
+`tests/unit/queue-kind-vocabulary.test.ts` parses the enum out of the SQL and pins all three
+together — parsing rather than importing, because importing `taskKindSchema` *is* the thing
+that agreed with itself while both were wrong about the database.
+
+### Verified by running it
+
+```
+GET /api/cron/enqueue -> {"ok":true,"due":9,"enqueued":9,"failed":[]}
+GET /api/cron/process -> {"claimed":9,"done":2,"requeued":7,"unhandled":0}
+```
+
+| source | status | found | inserted | first error |
+|---|---|---|---|---|
+| Arbeitnow | **success** | 300 | 300 | — |
+| Remotive | **success** | 15 | 15 | — |
+| Greenhouse / Lever / Ashby | failed | 0 | 0 | (none — see below) |
+| USAJOBS | failed | 0 | 0 | `USAJOBS_AUTHORIZATION_KEY is not set` |
+| Adzuna | failed | 0 | 0 | `missing ADZUNA_APP_ID and ADZUNA_APP_KEY` |
+| Firecrawl Search | failed | 0 | 0 | `HTTP 400` |
+| Firecrawl Scrape | failed | 0 | 0 | (none) |
+
+**306 jobs** and **315 sightings** for 306 rows — so dedupe merged nine duplicate sightings
+onto existing rows, and `0012`'s per-source record captured exactly that. The dedupe engine and
+the sighting table working together, on real data, for the first time.
+
+The three ATS sources fail with **no error at all**, which is correct rather than broken: their
+seeded `config` is `{"boards":[]}` / `{"organizations":[]}`, the connector iterates zero
+targets, and `runStatusFor` treats a run that found zero postings as `failed` (the documented
+judgement call — an empty ATS board is indistinguishable from a working one from outside). The
+fix is configuration, not code: real board tokens.
+
+### One process trap worth the write-up
+
+The first restart after the fix failed with `EADDRINUSE` — `CloseMainWindow()` on a background
+`pnpm start` does nothing — so the verification request hit the **old build** and returned the
+identical `scrape_source` error. It was tempting to read that as "the fix didn't work". It said
+nothing either way. `Get-NetTCPConnection -LocalPort 3000` → `Stop-Process -Id … -Force`, then
+rebuild, then retest.
+
+### Gates
+
+`typecheck exit=0` - `lint exit=0` - **994 passed | 0 skipped** (56 files). `pnpm build` green.
+
+**Config still needed for the other seven sources:** `ADZUNA_APP_ID` *and* `ADZUNA_APP_KEY`
+(note: `.env.local` only declares the latter, so Adzuna cannot work even once a key is set),
+`FIRECRAWL_API_KEY`, `USAJOBS_AUTHORIZATION_KEY`, and Greenhouse/Lever/Ashby board tokens.
+`job_scores` is still 0 because `profiles` is 0 — nothing scores until a user completes
+onboarding and a `rescore_profile` task runs, which is why the feed reads empty.

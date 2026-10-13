@@ -520,7 +520,7 @@ suite("RLS policies against a real Postgres", () => {
         action: "queue.task_failed",
         target_type: "task_queue",
         target_id: "00000000-0000-0000-0000-000000000000",
-        meta: { kind: "scrape_source", attempts: 3, error: "boom" },
+        meta: { kind: "ingest_source", attempts: 3, error: "boom" },
       });
       expect(error, "the queue's audit insert shape must be valid").toBeNull();
     });

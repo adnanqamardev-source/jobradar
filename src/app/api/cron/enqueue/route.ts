@@ -35,11 +35,36 @@ import { env } from "@/lib/env";
 import { createClient } from "@/lib/db/client";
 import { readSources } from "@/lib/ingest/sources";
 import { logger } from "@/lib/logger";
+import type { TaskKind } from "@/types/db";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * The task kind this route creates.
+ *
+ * `ingest_source`, not `scrape_source`. The Postgres `task_kind` enum (0001_init.sql:51) and
+ * `docs/02` §5.9 both name it `ingest_source`; `docs/02` §7 even lists the handler file as
+ * `handlers/ingest_source.ts`. This route said `scrape_source`, which the enum has never
+ * contained, so **every insert failed**:
+ *
+ *   {"due":9,"enqueued":0,"failed":[{"reason":"invalid input value for enum task_kind:
+ *    \"scrape_source\""}, x9]}
+ *
+ * and ingestion could never run a single task. Nothing caught it because the insert went
+ * through `kind: row.kind as never`, which discards the compiler's only opinion. `row.kind`
+ * is typed `TaskKind` below, so the same mistake is now a compile error, and
+ * `tests/unit/queue-kind-vocabulary.test.ts` fails if a handler is registered under a kind the
+ * database would reject.
+ *
+ * Note `EnqueuePlanEntry.kind` carries the *source* kind (`api_greenhouse`, …) and this route
+ * does not use it — every source produces the same task kind and the handler re-reads
+ * `sources.kind` itself. Left in place because it is part of the plan's public shape, but it
+ * is not the value written to `task_queue.kind`.
+ */
+const ENQUEUE_TASK_KIND = "ingest_source" satisfies TaskKind;
+
 interface EnqueueStore {
-  insertTask(row: { kind: string; payload: Record<string, unknown> }): Promise<string | null>;
+  insertTask(row: { kind: TaskKind; payload: Record<string, unknown> }): Promise<string | null>;
   advanceSource(sourceId: string, nextRunAt: string): Promise<string | null>;
 }
 
@@ -79,7 +104,7 @@ export async function GET(request: Request) {
     async insertTask(row) {
       const { data, error } = await supabase
         .from("task_queue")
-        .insert({ kind: row.kind as never, payload: row.payload, status: "pending" })
+        .insert({ kind: row.kind, payload: row.payload, status: "pending" })
         .select("id")
         .single();
       if (error) {
@@ -107,7 +132,7 @@ export async function GET(request: Request) {
 
   for (const entry of entries) {
     const insertError = await store.insertTask({
-      kind: "scrape_source",
+      kind: ENQUEUE_TASK_KIND,
       payload: { source_id: entry.sourceId, enqueued_at: now.toISOString() },
     });
     if (insertError) {

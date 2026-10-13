@@ -143,6 +143,24 @@ detail lives in the tables above; here is only the rule and its trigger.
   (it greps SQL text) and happily reported green while the configured database was three
   migrations behind, for three days. Static checks and live checks answer different questions;
   a repo needs both, and only the live one notices the database moved.
+- **`as never` on a column value deletes the compiler's only opinion.** Trigger: an insert or
+  select through the **untyped** Supabase client (`createClient` with no database generic)
+  where the column is constrained in Postgres. Run: `pnpm typecheck`, then grep for
+  `as never` and delete it — if the code needs the cast, the code is wrong, not the type. Pointer:
+  `/api/cron/enqueue` wrote `kind: row.kind as never`, which is how `kind: "scrape_source"`
+  shipped against a `task_kind` enum that has never contained it. Every enqueue failed with
+  `invalid input value for enum task_kind` and **ingestion never ran a single task** — with
+  typecheck, lint and 994 tests green. A value constrained by a Postgres enum has exactly one
+  legal vocabulary; derive it from the schema (`taskKindSchema.options`) and let the mismatch
+  be a compile error. `tests/unit/queue-kind-vocabulary.test.ts` pins it.
+- **Execute the feature, don't just compile it.** Trigger: any claim that a route, worker or
+  handler "works". Run: curl it — `GET /api/cron/enqueue` with the cron secret, then
+  `/api/cron/process`, then count the rows the feature is supposed to produce. Pointer: this is
+  the same rule as the feed's `.000Z` fixtures and the stale remote, one layer up: a unit suite
+  proves the code agrees with itself, a curl proves it agrees with the world. Also kill the old
+  listener first (`Get-NetTCPConnection -LocalPort 3000` → `Stop-Process -Force`) — a
+  `CloseMainWindow()` on a background `pnpm start` silently leaves it running, and you end up
+  testing the previous build and reading its output as your fix's.
 - **PowerShell 5.1 on this machine.** No `&&` (use one command per line, or `;`), and
   `supabase` is not on PATH — use `pnpm exec supabase …` or `node_modules\.bin\supabase.cmd`.
   Also: judge `eslint`/`build`/`supabase` by `$LASTEXITCODE`, not by the red stderr, because
