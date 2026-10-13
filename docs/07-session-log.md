@@ -2032,3 +2032,76 @@ technique to repeat. The `edit` tool does the same job without the risk.
 
 Gates: `typecheck exit=0` · `lint exit=0` · `821 passed | 42 skipped` (+31).
 `pnpm build` green — `/dashboard` correctly `ƒ (Dynamic)`.
+
+---
+
+## Session — 2026-10-14 · BE-305 + FE-107 (feed actions)
+
+Finished the in-flight slice that was uncommitted at the start of the session:
+the three feed Server Actions and the card's action row. The interesting part
+was not the feature — it was that **two of the four idempotency claims in the
+code were false, and the test double was what kept them false.**
+
+### `markApplied`: `ignoreDuplicates` does not return the existing row
+
+The comment claimed the upsert "returns the existing row, so the action reports
+success with the application's id either way". PostgREST's
+`Prefer: resolution=ignore-duplicates` **omits conflicting rows from the
+returned representation**. `.single()` on that is `PGRST116`, not the record —
+so the *second* apply of an already-applied job returned
+`internal_error`, which is precisely the case the ticket exists to prevent.
+
+Now: treat a returned row as "created", resolve the id through a second read
+otherwise. The initial `application_events` row is written only when absent, so
+a re-run never duplicates the history entry — and a run that died between the
+two writes is repaired.
+
+### Save/Dismiss: `maybeSingle()` is an error on two rows
+
+`job_events`' primary key is `(user_id, job_id, event, at)` — `at` is in the
+key, so two clicks straddling the check/insert window both insert, and both
+succeed. The next read then hits `maybeSingle()` on two rows, which PostgREST
+rejects. A clean save became a 500. Now `.limit(1)` + array length.
+
+### The double was why both survived
+
+Three separate double defects, each of which made the tests pass for the wrong
+reason:
+
+| Defect in the double | What it hid |
+|---|---|
+| `select().eq().eq().eq().maybeSingle()` only exposed `is` one level down | A reordered chain threw `TypeError`, surfaced as `internal_error` — looked like a production bug, was a test bug. |
+| `limit()` returned the terminal result, so `.limit(1).maybeSingle()` did not exist | Same failure class; would have shipped if the chain had ever changed. |
+| `single()` and `maybeSingle()` were the *same* terminal | **The regression tests could not fail.** With `single()` restored in production, all 16 tests still passed. After modelling `single()` as PGRST116-on-zero-rows, the two new tests failed against the old code and pass against the new — which is the only evidence that they test anything. |
+
+The lesson is the "guards must be able to fail" rule arriving from a new
+direction: not a regex that cannot match its own file, but a **stub whose two
+methods were behaviourally identical**, making a real defect invisible.
+
+The builder is now generic (`eq`/`is` in any order, terminal decides
+row-vs-array, `then` supplied so `await` works) rather than a hand-rolled chain
+per table.
+
+### Method
+
+Fixed the production code → wrote the tests → reverted production to confirm the
+tests fail → restored. The `.single()` revert was the check worth doing: without
+it I would have reported "idempotency verified" for behaviour the suite could
+not observe.
+
+Also hit the documented gate-order lesson: `pnpm test` was not run first here,
+but a property was added to the client's returned object rather than its opts
+and only `typecheck` caught it — the test file compiles under vitest regardless.
+
+Gates: `typecheck exit=0` · `lint exit=0` · `837 passed | 42 skipped` (+16).
+
+### Not done
+
+- **FE-110** (mark-applied dialog) — the Apply button is rendered disabled with
+  its reason, per "buttons that do nothing are worse than a documented gap".
+- **FED-005** cluster dismiss (`dedupe_hash`) — one sighting only.
+- **No live-DB verification.** The Docker daemon is down on this machine
+  (`docker info` → client 29.8.1, no server), so the integration suite and
+  `supabase db reset` were not run. Every claim above is unit-level; the
+  PostgREST behaviour was confirmed against the PostgREST/postgrest-js docs, not
+  against this project's stack.

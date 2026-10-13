@@ -5,20 +5,15 @@
  *
  * Company, score badge (via ScoreMeter), title (linked to the detail page),
  * meta row (location · type · seniority), salary, skill chips, source count,
- * posted date. Everything is semantic HTML: `<article>`, `<h3>`, `<ul>` for
- * chips — no utility classes, no div-soup.
- *
- * ## What deliberately does not render yet
- *
- * The action row (Save / Dismiss / Mark applied) arrives with FE-107 when the
- * server actions exist. Buttons that do nothing are worse than a documented
- * gap, so the row is commented rather than stubbed.
+ * posted date, and the action row (FE-107). Everything is semantic HTML:
+ * `<article>`, `<h3>`, `<ul>` for chips — no utility classes, no div-soup.
  */
 
 import Link from "next/link";
 
 import type { FeedRow } from "@/lib/db/queries/feed";
 import { formatDate, formatSalary } from "@/lib/utils/format";
+import { JobCardActions } from "./job-card-actions";
 import { ScoreMeter } from "./score-meter";
 
 export function JobCard({ job }: { job: FeedRow }) {
@@ -58,10 +53,11 @@ export function JobCard({ job }: { job: FeedRow }) {
       <p>Posted {formatDate(job.posted_at)}</p>
 
       {/*
-        ACTION ROW — lands with FE-107 (server actions + optimistic updates).
-        The card's done-when in FED-001 includes it; until BE-305 exists there
-        is nothing honest to put here.
+        FE-107: Save / Dismiss with optimistic update + rollback + alert
+        toast. Mark applied stays disabled until the apply modal (FE-110)
+        exists — see job-card-actions.tsx.
       */}
+      <JobCardActions jobId={job.id} initialState={{ saved: job.saved, dismissed: job.dismissed }} />
     </article>
   );
 }
