@@ -161,6 +161,18 @@ detail lives in the tables above; here is only the rule and its trigger.
   listener first (`Get-NetTCPConnection -LocalPort 3000` → `Stop-Process -Force`) — a
   `CloseMainWindow()` on a background `pnpm start` silently leaves it running, and you end up
   testing the previous build and reading its output as your fix's.
+- **`"use server"` files export async functions and nothing else.** Trigger: exporting a const,
+  type re-export or helper from any file with the `"use server"` directive. Run: `pnpm build` —
+  typecheck and lint both pass, because this is a *Next* rule, not a TypeScript one, so it only
+  surfaces at build: *"Only async functions are allowed to be exported in a 'use server' file."*
+  Pointer: put the constants in `src/lib/<area>/constants.ts` and import them into the action.
+  Corollary for components: the same applies to `page.tsx`, which may only export the default
+  component — so a page cannot export a shared constant either.
+- **A "use client" component must not `.from()` directly.** Trigger: reaching for a Supabase
+  client inside a page or component. Run: `pnpm lint` — `@typescript-eslint/no-unsafe-*` fires
+  on every column, because the client is untyped and the read returns `any`. Pointer: docs/06 §8.1
+  already forbids it; put the read in `src/lib/db/queries/` behind a Zod schema. The lint rule
+  and the architecture rule are the same rule, which is the nice part.
 - **PowerShell 5.1 on this machine.** No `&&` (use one command per line, or `;`), and
   `supabase` is not on PATH — use `pnpm exec supabase …` or `node_modules\.bin\supabase.cmd`.
   Also: judge `eslint`/`build`/`supabase` by `$LASTEXITCODE`, not by the red stderr, because
