@@ -2579,6 +2579,96 @@ onboarding and a `rescore_profile` task runs, which is why the feed reads empty.
 
 ---
 
+## Session - 2026-10-14 (9th) · E2E for the wizard (FE-102)
+
+I had closed the last session by telling the user *"You can now try it: sign up, and `/onboarding`
+walks you through profile → scoring → a real feed."* That claim had **30 component tests and 13
+unit tests behind it and zero evidence.** A component test renders a component with props; it
+cannot catch a server action that 400s, a profile row the signup trigger never created, or a step
+counter that silently stops being written. So this session went and executed the claim.
+
+### The harness: a real session with no backdoor
+
+Every route under test sits behind `requireUser()`. Four ways to fake that, and why each was
+rejected or discarded:
+
+| Attempt | Outcome |
+|---|---|
+| Test-only login route | Rejected on principle — a backdoor that survives refactors. |
+| Hand-written auth cookie | Rejected — tests the cookie, not the sign-in; would pass if the app stopped reading it. |
+| `admin.generateLink` + follow it | **Implemented, then discarded.** Mints an *implicit*-flow link, so GoTrue returns `#access_token=…` in the **fragment**, not `?code=`. The app's `/auth/callback` reads `code`, so the browser landed on `/auth/auth_code_error` — 12 tests red. Not an app bug: a real magic link is minted by `signInWithOtp` in a browser, which registers a PKCE challenge and gets `?code=`. Worth knowing because the symptom is indistinguishable from a broken callback. |
+| Mailpit | Dead end — it only receives mail for the *local* stack, and `.env.local` points at the remote project. |
+
+What shipped: real tokens from GoTrue's `grant_type=password` endpoint, and the session cookie
+written by **`@supabase/ssr` itself** — same library, same `sb-<ref>-auth-token` name the app's
+server client reads. Nothing about the cookie format is reimplemented, so library drift fails
+these tests rather than passing them. Two things remain bypassed, and both are now written down
+in the file header: the inbox, and `/auth/callback` itself.
+
+### Three defects found, two of them mine
+
+**1. The resume point was fire-and-forget (real product bug).** `goToStep` did
+`void setOnboardingStep({ step: next })` and changed step immediately. The E2E run caught it:
+navigate away within milliseconds and `onboarding_step` is still 1, so the wizard reopens at step
+1 **with every answer already saved** — which reads as "setup forgot everything", the exact
+failure ONB-001's resume requirement exists to prevent. Fixed by awaiting the write before the
+step changes. One extra round trip per step on a four-step flow, immediately after a save that
+already round-tripped.
+
+**2. My cleanup broke the tests it was cleaning up after.** The orphan-user sweep started as a
+`test.beforeAll`. With `fullyParallel: true` and seven workers, **every worker ran it**, so worker
+2 deleted the user worker 1 had created seconds earlier:
+
+```
+Error: setSession failed: User from sub claim in JWT does not exist
+Error: expect(locator).toHaveText(expected) failed
+```
+
+The second and third are downstream of the first — a deleted session bounces to `/login`, where
+no wizard element exists. It read exactly like a flaky wizard. Moved to `globalSetup`, which runs
+once per invocation before workers fork. Cleanup that breaks the tests it cleans up after is
+worse than no cleanup.
+
+**3. `fill()` is not enough on WebKit (harness, not product).** All 10 remaining failures were
+`mobile-safari` only, all showing a title field that had been filled yet produced no chip. Guessing
+was not an option, so I instrumented the real key/input events:
+
+| sequence | chips committed | Continue |
+|---|---|---|
+| `fill()` → `Enter` | 0 | disabled |
+| `tap()` → `fill()` → `Enter` | 1 | enabled |
+| `fill()` → click "Add title" | 0 | disabled |
+
+React's controlled-input tracker never sees a change when nothing focused the field first, so
+`onChange` never runs and the handler commits an empty draft. A **harness artefact** — a real user
+always taps a field before typing, and the dev server is identical across projects — but it fails
+on one browser and passes on the other two, which is precisely how a real defect gets filed as
+"Safari is flaky". Fixed with a `fillInto()` helper that taps first, and the measurement table is
+in the helper's docstring so the next person does not re-derive it.
+
+### A correction to the last session
+
+I reported that **Adzuna needs `ADZUNA_APP_ID`, which `.env.local` does not declare.** That was
+wrong: `ADZUNA_APP_ID` is declared (`docs/02c-config.md` lists it). The source still fails for a
+different reason — the value is empty. The claim was never in the docs, so there is nothing to
+amend there; recording it because the error may have been acted on.
+
+### What a green e2e job in this repo has never proved
+
+The CI e2e job supplies **placeholder** Supabase values and is forbidden from live calls, so every
+authed spec **skips** there, with a stated reason. `smoke.spec.ts` stays the CI gate and covers
+public routes only. Stated plainly rather than buried: as of this session, CI has never signed in,
+never written a profile, and never rendered a feed. The 60 green specs above ran locally.
+
+### Gates
+
+`typecheck exit=0` - `lint exit=0` - **1039 passed | 0 skipped** (58 files) - `pnpm build` green -
+**60 passed / 0 failed / 0 skipped** across chromium, mobile-chrome and mobile-safari. The
+resume-point regression test was proven to **fail** against the fire-and-forget code (3 failures)
+before being accepted.
+
+---
+
 ## Session - 2026-10-14 (8th) · the onboarding wizard (FE-102)
 
 Asked whether the scraper worked, found it had never run, fixed it, proved scoring works, and

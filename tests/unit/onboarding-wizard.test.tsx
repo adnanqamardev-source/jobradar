@@ -176,6 +176,50 @@ describe("wizard shell", () => {
     expect(mocks.setOnboardingStep).toHaveBeenCalledWith({ step: 2 });
   });
 
+  it("does not advance to the next step until the resume point is persisted", async () => {
+    // `onboarding_step` is the only record of how far the user got. If the step changed before
+    // the write landed, a user who closed the tab right after Continue would reopen at step 1
+    // with their answers already saved — which reads as "setup forgot everything".
+    //
+    // This is the regression the E2E run found: `goToStep` used to `void` the write.
+    // Assigned when the wizard actually calls the action. Throwing rather than defaulting to a
+    // no-op means a test that reaches `release()` before the write started fails with a real
+    // message instead of hanging on a promise nobody will ever resolve.
+    let release: () => void = () => {
+      throw new Error("release() called before setOnboardingStep was invoked");
+    };
+    mocks.setOnboardingStep.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ ok: true });
+        }),
+    );
+
+    renderWizard();
+    await userEvent.type(screen.getByLabelText("Target job titles"), "Engineer{Enter}");
+    await userEvent.click(continueButton());
+
+    // Wait until the write is genuinely in flight before asserting we have not moved on —
+    // otherwise this passes on a wizard that never called it at all.
+    await waitFor(() => expect(mocks.setOnboardingStep).toHaveBeenCalledWith({ step: 2 }));
+    expect(stepHeading()).toHaveTextContent("Role & seniority");
+
+    release();
+    await waitFor(() => expect(stepHeading()).toHaveTextContent("Skills"));
+  });
+
+  it("still advances when persisting the resume point fails", async () => {
+    // The marker is a convenience. A database hiccup on it must not cost the user the step they
+    // asked for — and `setOnboardingStep` returns a result rather than throwing precisely so
+    // this path can be handled.
+    mocks.setOnboardingStep.mockRejectedValue(new Error("network down"));
+    renderWizard();
+    await userEvent.type(screen.getByLabelText("Target job titles"), "Engineer{Enter}");
+    await userEvent.click(continueButton());
+
+    await waitFor(() => expect(stepHeading()).toHaveTextContent("Skills"));
+  });
+
   it("persists progress even when the step is skipped", async () => {
     renderWizard();
     await userEvent.click(screen.getByRole("button", { name: "Skip for now" }));

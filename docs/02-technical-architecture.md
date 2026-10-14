@@ -45,6 +45,17 @@
 | **Error tracking** | **Sentry** | latest | Next.js SDK, source maps, traces sampled at 20%. |
 | **Hosting** | **Vercel** | — | Next.js-native, cron, preview deploys. |
 | **Testing** | **Vitest** + **Playwright** + **Testcontainers Postgres** | — | Unit/integration/e2e. Connector contract tests run against recorded fixtures, not live APIs. Config is `vitest.config.mts`; serial execution via top-level `fileParallelism: false` (Vitest 4+ removed `poolOptions`). |
+
+> **E2E coverage, stated honestly (2026-10-14).** `tests/e2e/smoke.spec.ts` covers **public routes
+> only** — marketing, login, 404, bundle-secret hygiene. The authed specs
+> (`tests/e2e/onboarding.spec.ts`) need a real Supabase and are a **local-only** gate: CI's e2e job
+> supplies placeholder credentials and may not make live calls, so those specs **skip** there with
+> a stated reason. As of this date CI has never signed in, never written a profile, and never
+> rendered a feed. Session state comes from `tests/e2e/support/auth.ts` (real GoTrue
+> `grant_type=password` tokens, with the cookie written by `@supabase/ssr` rather than
+> reimplemented); whole-run cleanup lives in `tests/e2e/support/global-setup.ts` — **not** a
+> `beforeAll`, because `fullyParallel: true` runs that once *per worker* and the workers delete
+> each other's users.
 | **Lint / format** | **ESLint** + **Prettier** | latest | Flat config (`eslint.config.mjs`). `next lint` is removed in Next 16 — lint via `eslint .`. Includes the service-role import guard and a no-hex-literals rule. |
 
 ### What we are explicitly *not* using (and why)

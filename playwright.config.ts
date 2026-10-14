@@ -1,4 +1,31 @@
+import { existsSync } from "node:fs";
 import { defineConfig, devices } from "@playwright/test";
+
+/**
+ * Load `.env.local` into the test process (FND-001: Node's own loader, never `dotenv`).
+ *
+ * Needed because `tests/e2e/support/auth.ts` talks to Supabase through the admin API, and
+ * Playwright — unlike `next dev` — does not read `.env.local` on its own. Without this the
+ * authed specs would skip locally with "no real Supabase credentials", which reads like a
+ * configuration problem rather than the missing loader it is.
+ *
+ * ## Why this cannot break CI
+ *
+ * `process.loadEnvFile` matches `--env-file` semantics: **a variable already in the environment
+ * wins** and is not overwritten. CI exports placeholder values (see `.github/workflows/ci.yml`),
+ * so on CI this loads nothing over them and `adminEnv()` keeps returning `null` and the authed
+ * specs keep skipping. That is the intended behaviour, and it is also the reason this is
+ * `loadEnvFile` and not a merge that assigns unconditionally.
+ *
+ * The file is gitignored and never leaves this machine. `try`/`catch` rather than
+ * `existsSync` alone: a machine with no `.env.local` should skip the authed specs with a stated
+ * reason, not fail the whole e2e job at config load.
+ */
+try {
+  if (existsSync(".env.local")) process.loadEnvFile(".env.local");
+} catch {
+  // No `.env.local` (fresh clone, or CI). The specs that need credentials skip themselves.
+}
 
 /**
  * Base URL resolution — docs/02 §4, and the fix for a defect docs/07 §2.1 recorded:
@@ -48,6 +75,10 @@ const isExternal = !/^https?:\/\/localhost(:\d+)?/.test(baseURL);
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  // Runs once per invocation, in the parent process, before workers fork. This is where the
+  // orphan-user sweep lives: doing it in a `beforeAll` meant every parallel worker ran it, and
+  // they deleted each other's test users mid-test. See `tests/e2e/support/global-setup.ts`.
+  globalSetup: "./tests/e2e/support/global-setup.ts",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

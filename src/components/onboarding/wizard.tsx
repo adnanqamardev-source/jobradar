@@ -87,12 +87,33 @@ export function Wizard({ profile, skills, selectedSkills, initialStep }: WizardP
   // step with the message beside the field, and this region announces it for screen readers.
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  function goToStep(next: number) {
+  /**
+   * Move to `next`, persisting the resume point first.
+   *
+   * ## Why this awaits instead of firing and forgetting
+   *
+   * It used to `void setOnboardingStep({ step: next })` and change step immediately. The E2E run
+   * caught why that was wrong: `onboarding_step` is the *only* record of how far the user got, and
+   * a user who closes the tab, hits back, or loses connection right after clicking Continue lost
+   * it — the wizard reopened at step 1 with their answers already saved, which reads as "setup
+   * forgot everything" and is the exact failure ONB-001's resume requirement exists to prevent.
+   *
+   * Awaiting costs one extra round trip per step change, on a four-step flow, immediately after a
+   * save that already round-tripped. Paying it makes the guarantee real and testable.
+   *
+   * The step number is written *before* the step changes so the stored marker never runs ahead of
+   * what the user can see. A failure is deliberately swallowed: `setOnboardingStep` returns a
+   * result rather than throwing for exactly this case, and losing a resume marker must never cost
+   * the user the step transition they asked for.
+   */
+  async function goToStep(next: number) {
+    try {
+      await setOnboardingStep({ step: next });
+    } catch {
+      // No user-visible consequence by design; see the note above.
+    }
     setStep(next);
     setSaveError(null);
-    // Persist the resume point before moving on, so abandoning mid-wizard still resumes here.
-    // Fire-and-forget: a failed marker must not block the step change.
-    void setOnboardingStep({ step: next });
   }
 
   // Focus the step heading after the new step renders.
@@ -155,10 +176,10 @@ export function Wizard({ profile, skills, selectedSkills, initialStep }: WizardP
                   setSaveError(result.error?.message ?? "We could not save your roles.");
                   return;
                 }
-                goToStep(2);
+                await goToStep(2);
               })
             }
-            onSkip={() => goToStep(2)}
+            onSkip={() => void goToStep(2)}
           />
         )}
 
@@ -175,10 +196,10 @@ export function Wizard({ profile, skills, selectedSkills, initialStep }: WizardP
                   setSaveError(result.error?.message ?? "We could not save your skills.");
                   return;
                 }
-                goToStep(3);
+                await goToStep(3);
               })
             }
-            onBack={() => goToStep(1)}
+            onBack={() => void goToStep(1)}
           />
         )}
 
@@ -196,10 +217,10 @@ export function Wizard({ profile, skills, selectedSkills, initialStep }: WizardP
                   setSaveError(result.error?.message ?? "We could not save your preferences.");
                   return;
                 }
-                goToStep(4);
+                await goToStep(4);
               })
             }
-            onBack={() => goToStep(2)}
+            onBack={() => void goToStep(2)}
           />
         )}
 
@@ -229,7 +250,7 @@ export function Wizard({ profile, skills, selectedSkills, initialStep }: WizardP
                 router.refresh();
               })
             }
-            onBack={() => goToStep(3)}
+            onBack={() => void goToStep(3)}
           />
         )}
       </section>

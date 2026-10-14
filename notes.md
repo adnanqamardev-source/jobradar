@@ -173,6 +173,37 @@ detail lives in the tables above; here is only the rule and its trigger.
   on every column, because the client is untyped and the read returns `any`. Pointer: docs/06 §8.1
   already forbids it; put the read in `src/lib/db/queries/` behind a Zod schema. The lint rule
   and the architecture rule are the same rule, which is the nice part.
+- **`fill()` needs a `click()` first on WebKit.** Trigger: a Playwright spec that fills a React
+  controlled input and then reads component state (a chip appearing, a button becoming enabled),
+  especially in `tests/e2e/`. Run: `pnpm exec playwright test <file> --project=mobile-safari
+  --workers=1`. Symptom: the DOM value is right, the state is empty, and the assertion fails on
+  `mobile-safari` while passing on chromium and mobile-chrome. Cause: React's controlled-input
+  tracker never sees a change when nothing focused the field. Pointer: use the `fillInto()` helper
+  in `tests/e2e/onboarding.spec.ts`; the measurement table is in its docstring. **Never write this
+  off as "flaky on Safari"** — that is how a one-browser failure becomes a permanent mystery.
+- **A parallel suite's cleanup belongs in `globalSetup`, not `beforeAll`.** Trigger: any test or
+  fixture that deletes shared state (users, rows, files) while other tests may be using it. Run:
+  the suite with default workers, not `--workers=1`. Symptom: `User from sub claim in JWT does
+  not exist`, or a cascade of unrelated locator failures — because one worker deleted another's
+  data mid-test. `fullyParallel: true` means `beforeAll` runs **once per worker**. Pointer:
+  `tests/e2e/support/global-setup.ts`.
+- **Test fixtures cannot be torn down from inside a test.** Trigger: wanting `test.afterEach()` in
+  a `signIn()` helper. Run: the test fails immediately with *"Playwright Test did not expect
+  test.afterEach() to be called here."* Pointer: make it a fixture — `tests/e2e/support/fixtures.ts`.
+  The bonus is that a test which never binds the fixture never creates a user, so the signed-out
+  spec stays signed out without opting back out.
+- **Verify the claim, not the components.** Trigger: saying a feature "works" or "is usable" after
+  unit and component tests pass. Run: drive it in a browser with a real session — Playwright spec,
+  or curl. Pointer: docs/06 Phase 2 gates on *"Playwright E2E green against unstyled UI:
+  onboarding → feed → apply → stage move"*. A component test renders a component with props; it
+  cannot see a server action that 400s, a signup trigger that never fired, or a counter nothing
+  writes. The wizard had 43 green tests and a resume feature that lost its state on navigation.
+- **`admin.generateLink` does not give you a `?code=` link.** Trigger: building an E2E sign-in
+  around the Supabase admin API, then following `action_link`. Symptom: the browser lands on
+  `/auth/auth_code_error` while holding `#access_token=…` in the **fragment**. Cause: it mints an
+  implicit-flow link; only `signInWithOtp` from a browser registers a PKCE challenge. Pointer:
+  `tests/e2e/support/auth.ts` — real `grant_type=password` tokens with the cookie written by
+  `@supabase/ssr`. This is a harness limitation, not a callback bug; do not "fix" `/auth/callback`.
 - **PowerShell 5.1 on this machine.** No `&&` (use one command per line, or `;`), and
   `supabase` is not on PATH — use `pnpm exec supabase …` or `node_modules\.bin\supabase.cmd`.
   Also: judge `eslint`/`build`/`supabase` by `$LASTEXITCODE`, not by the red stderr, because
