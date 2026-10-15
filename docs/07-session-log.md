@@ -2742,3 +2742,121 @@ believing a green run — is now in `notes.md`. A skipped suite is not a pass.
 `typecheck exit=0` - `lint exit=0` - **1037 passed | 0 skipped** (58 files). `pnpm build` green,
 `/onboarding` 4.28 kB. Both distinctive claims (the 3-skill gate, the focus effect) were proven to
 **fail** against the wrong code before being accepted.
+
+---
+
+## Session - 2026-10-15 (10th) · looking at the product, and the queue deadlock behind it
+
+I had just built E2E coverage that asserted the wizard works. It does — 60 specs green. But I had
+never *looked* at the thing. So I drove it with a Python Playwright script, screenshotted every
+step at desktop and mobile widths, and read the dashboard.
+
+The wizard looked right (Phase 2: unstyled but structured). Zero horizontal overflow on all five
+screens, on both widths. Then the dashboard said:
+
+> **No jobs match your filters** — Try widening your filters, or check back after the next scrape run.
+
+Which is a lie. I had set no filters. Checking why:
+
+| check | result |
+|---|---|
+| profile row | `target_titles:["Backend Engineer"]`, `work_modes:["remote"]`, `onboarding_completed:true` — correct |
+| `job_scores` for that user | **0** |
+| rescore task | `pending`, `attempts=0` — never run |
+| `/api/cron/process` | **HTTP 500** `{"error":"claim_failed"}` — every call |
+
+### A queue deadlock that stops scoring for every user, permanently
+
+`claim_tasks` opens with a reap: `UPDATE task_queue SET status='pending' WHERE status='running'
+AND lease expired`. It knows nothing about `idx_task_queue_one_pending_rescore_per_profile`
+(0007), the partial unique index allowing **one pending rescore per profile**.
+
+When a profile held both a stale `running` row and a `pending` row, that UPDATE raised `23505` —
+and because the reap is the *first statement of the function*, the **whole transaction aborted**.
+Every claim, for every user, forever. The failure is self-sustaining: the reaper that causes the
+wedge is the code meant to clear it.
+
+Measured on the linked project: **100 pending tasks queued behind one bad row.**
+
+The state is reachable through the ordinary path, not an exotic one. `runRescoreProfile` requeues
+by inserting a *continuation* row carrying `resume_after`, and a worker dying between that insert
+and the settle leaves exactly this pair. docs/02b §6.4's batching rule makes it routine.
+
+### Fix 0013 — and the flaw in it I found by reading it back
+
+The reap is now two statements: a stale `running` rescore with a pending sibling is retired to
+`done` (the continuation carries the cursor); everything else reaps as before, guarded so a
+rescore is only resurrected when no pending sibling exists.
+
+I also caught myself mid-draft writing the reap as **one-off UPDATEs** instead of inside the
+function body. That would have cleared today's wedge and left the bug completely intact, because
+the reap lives in `claim_tasks`. The header of 0013 records that draft and why it was wrong.
+
+**Then, reviewing my own migration before finishing, a second flaw:** step 1 had no lease
+condition. `runRescoreProfile` inserts its continuation *while still running*, so there is a
+window where a **live** worker's row legitimately has a pending sibling. Step 1 retired it —
+clearing `locked_at`/`locked_by` under a worker that was still executing. If that worker's settle
+then took the retry branch, it would write the row back to `pending` beside the continuation it
+just inserted: the same `23505`, arriving from the opposite direction, in the very code path 0013
+had just written the guard for.
+
+Wrote the test before the fix. Against 0013:
+
+```
+AssertionError: expected 'done' to be 'running'
+```
+
+Fixed forward-only in **0014** (0013 was already pushed, and applied migrations are not edited).
+The lease condition scopes the retirement to the population the reap already targets: a worker
+that died. Not one that is still running.
+
+### The second defect: a jsonb payload cannot cascade
+
+`task_queue.payload` is `jsonb`, so it has no foreign key to `profiles`. Deleting a user cascades
+the profile and leaves every queued task behind. **95 of 100 pending rescore tasks referenced a
+deleted profile** — and most were mine, from E2E runs.
+
+`teardownUser` now deletes the user's tasks before the user. Verified: a 14-test E2E run now
+leaves **0 orphans**, where each run previously added ~14.
+
+Still open, and recorded as such in docs/02b §6.4: an account deleted through any other path (the
+Supabase dashboard) still leaves orphans. The durable fix is a real foreign key or a join table.
+
+### Verified end to end, in a browser
+
+1. Sign up → wizard → Finish → `/dashboard` says "No jobs match your filters" (0 scores).
+2. Drain the worker: `claimed=2 done=2 failed=0` on every pass — where every call had been a 500.
+3. **291 `job_scores` for that user, top score 63.82.**
+4. Reload `/dashboard`: **19 jobs**, ranked, with scores, match bands, locations, dates, and
+   Save / Dismiss / Mark applied.
+
+Ingest → score → feed, for a real signed-in user, on the real project.
+
+### Two corrections to my own reporting
+
+- I said the loop user had "0 scores". I had queried `job_scores.profile_id`; the column is
+  `user_id`. Zero was my query's fault, not the pipeline's — and it was one step from becoming a
+  reported regression.
+- `pnpm build` is needed before this kind of inspection: `next dev`'s on-demand compile blew
+  Playwright's 30s `goto` budget, and a timeout there looks like an application hang.
+
+### Adjacent problem found, not fixed
+
+`rescore-store.ts` → `requeue()` does a bare `insert` and **never checks `.error`**. If the insert
+violates the unique index it fails silently and the batch is lost without a trace. It is benign
+today (a colliding pending task covers the same jobs), but it is a silent failure path and belongs
+on the list.
+
+### Gates
+
+`typecheck exit=0` - `lint exit=0` - **1045 passed | 0 skipped** (59 files) - `pnpm build` green -
+**14 passed** E2E on chromium. 0013 and 0014 applied to the linked project after
+`db push --dry-run`; both pass `pnpm db:reset` locally first. The reaper fix was proven by running
+the pre-0013 reap by hand against the same fixture:
+
+| | result | statuses after |
+|---|---|---|
+| pre-0013 reap | `ERROR: duplicate key value violates unique constraint` | `pending, pending, running, running` — unchanged |
+| 0013 step 1 | SUCCEEDED | `pending, pending` |
+
+and the lease guard by the test above failing against 0013.

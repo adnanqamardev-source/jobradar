@@ -290,6 +290,37 @@ therefore first returns `running` rows whose lease is older than `p_lease_second
 `pending` (clearing the lease and setting `run_after = now()` so the task is immediately
 due). Only *expired* leases are touched — a row a live worker holds keeps its lease.
 
+**Amended 2026-10-15 (`0013_reaper_guard_and_orphan_cleanup.sql`).** The reap as originally
+written had a fatal interaction with `idx_task_queue_one_pending_rescore_per_profile` (0007).
+That partial unique index permits **one pending rescore per profile**, and the reap knew
+nothing about it. When a profile held both a stale `running` row and a `pending` row, the reap
+tried to create a second pending row, Postgres raised `23505`, and — because the reap is the
+first statement of the function — **the entire claim transaction aborted**. `/api/cron/process`
+answered `500 {"error":"claim_failed"}` on every call, for every user, forever: one stale lease
+pair permanently stopped scoring for the whole project. Observed live with 100 pending tasks
+queued behind a single bad row.
+
+The state is reachable through the ordinary batching path, not an exotic one: `runRescoreProfile`
+requeues by inserting a *continuation* row carrying `resume_after`, and a worker that dies between
+that insert and the settle of the original row leaves exactly this pair.
+
+The reap is now two statements, in order:
+
+1. A stale `running` **rescore** row that already has a `pending` sibling is retired to **`done`**,
+   not `pending`. It is finished work — the continuation carries the cursor forward.
+2. Any other expired lease is reaped to `pending` as before, except that a `rescore_profile` row
+   is only reaped when no pending sibling exists for that profile.
+
+Pinned by `tests/integration/claim-reaper.db.test.ts`, which needs a real database because the
+bug requires two rows in a state the enqueue path is designed to prevent.
+
+> **Still open.** `task_queue.payload` is `jsonb`, so it cannot carry a foreign key to `profiles`.
+> Deleting a user cascades `profiles` but leaves every queued task behind, and the worker keeps
+> claiming tasks for profiles that no longer exist (95 of 100 pending rescore tasks on the linked
+> project). `0013` purges the existing orphans and `tests/e2e/support/auth.ts` now clears a
+> user's tasks before deleting the user, but an account deleted by any other path still leaves
+> orphans. A real foreign key, or a `job_queue_profiles` join table, is the durable answer.
+
 **Handler dispatch is BE-108.** Until `src/lib/queue/handlers/*` exists, a claimed task has
 nothing to run. `queue-drain.ts` releases it back to `pending` with an explanatory
 `last_error` rather than marking it `done`, so a drained row stays visible and retryable

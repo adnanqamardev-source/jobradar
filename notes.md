@@ -204,6 +204,30 @@ detail lives in the tables above; here is only the rule and its trigger.
   implicit-flow link; only `signInWithOtp` from a browser registers a PKCE challenge. Pointer:
   `tests/e2e/support/auth.ts` — real `grant_type=password` tokens with the cookie written by
   `@supabase/ssr`. This is a harness limitation, not a callback bug; do not "fix" `/auth/callback`.
+- **A queue reap must respect every unique index on the table, not just `status`.** Trigger:
+  writing or changing a `task_queue` UPDATE — the reaper in `claim_tasks`, the requeue in
+  `rescore-store.ts`, anything with `where status = 'running'`. Run: build the state the enqueue
+  path is designed to prevent (here: one stale `running` row **plus** one `pending` row for the
+  same profile), then call `claim_tasks` and expect no error —
+  `pnpm vitest run tests/integration/claim-reaper.db.test.ts`. Symptom when it is wrong:
+  `duplicate key value violates unique constraint "idx_task_queue_one_pending_rescore_per_profile"`.
+  Cause: `claim_tasks`'s reap raised `23505` on the **first statement of the function**, so the
+  whole transaction aborted and `/api/cron/process` returned `500 {"error":"claim_failed"}` for
+  *every* task, *every* user, forever — the reap that causes the wedge is the code meant to clear
+  it. Pointer: `0013_reaper_guard_and_orphan_cleanup.sql` and docs/02b §6.4. **Unit tests cannot
+  catch this class** — it needs two rows in a state the enqueue path prevents.
+- **A jsonb payload column cannot cascade.** Trigger: storing a reference in `task_queue.payload`
+  (or any jsonb) and expecting `delete user` to clean it up. Symptom: the worker keeps claiming
+  tasks for profiles that no longer exist; the queue grows without bound. Run: after a test run,
+  count tasks whose `payload->>'profile_id'` has no matching `profiles` row. Pointer: migration
+  `0013`'s purge, `tests/e2e/support/auth.ts` clearing tasks before deleting a user, and the
+  "Still open" note in docs/02b §6.4. Do not claim this is fixed — only that the harness no
+  longer makes it worse.
+- **A failure that aborts a shared transaction takes down unrelated work.** Trigger: any `UPDATE`
+  at the head of a multi-statement function that all callers depend on. Ask: "if this raises,
+  what *else* stops working?" Here the answer was "scoring, for everyone, permanently" — which is
+  why a single bad row is a severity-1 incident rather than a retry. Pointer: the two-statement
+  reap in `0013`, where the guard is per-profile so one profile's bad state cannot block another's.
 - **PowerShell 5.1 on this machine.** No `&&` (use one command per line, or `;`), and
   `supabase` is not on PATH — use `pnpm exec supabase …` or `node_modules\.bin\supabase.cmd`.
   Also: judge `eslint`/`build`/`supabase` by `$LASTEXITCODE`, not by the red stderr, because

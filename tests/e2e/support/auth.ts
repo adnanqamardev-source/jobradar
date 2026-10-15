@@ -231,13 +231,33 @@ async function applySessionCookie(
 /**
  * Delete a user this harness created.
  *
- * `deleteUser` cascades through the database's own foreign keys, so the `profiles` row and any
- * `job_scores` the wizard produced go with it. Only ever called with an id returned by
- * `signInAsFreshUser` — it is not a general-purpose delete and takes no email or filter.
+ * ## Why the tasks are deleted first
+ *
+ * `task_queue.payload` is `jsonb`, so it carries no foreign key to `profiles`. Deleting the auth
+ * user cascades the `profiles` row but leaves every queued task behind, and the worker keeps
+ * claiming tasks for a profile that no longer exists. Measured on the linked project: **95 of 100
+ * pending rescore tasks referenced a deleted profile.** `sweepOrphanUsers` exists to clear that
+ * damage, but a suite that keeps creating it is making the problem worse on every run.
+ *
+ * So teardown removes the user's tasks, then the user. The task delete is scoped to
+ * `payload.profile_id = userId`, and `userId` only ever comes from `signInAsFreshUser`, so it
+ * cannot reach another account's rows.
+ *
+ * The deeper fix is a real foreign key, which a jsonb payload cannot express, so an account
+ * deleted through any other path (the Supabase dashboard) still leaves orphans. That gap is open
+ * and recorded in migration `0013`.
  */
 export async function teardownUser(userId: string): Promise<void> {
   const admin = adminClient();
   if (admin === null) return;
+
+  const { error: taskError } = await admin
+    .from("task_queue")
+    .delete()
+    .contains("payload", { profile_id: userId });
+  if (taskError) {
+    console.warn(`[e2e] could not clear tasks for ${userId}: ${taskError.message}`);
+  }
 
   const { error } = await admin.auth.admin.deleteUser(userId);
   // A cleanup failure must not fail the test it is cleaning up after: the assertions already
