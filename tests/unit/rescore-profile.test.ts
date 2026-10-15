@@ -96,14 +96,24 @@ function makeStore(opts: {
 }) {
   const all = opts.jobs ?? [];
   const saved: { profileId: string; jobId: string; finalScore: number }[] = [];
-  const requeues: { profileId: string; resumeAfter: string }[] = [];
+  const requeues: { profileId: string; resumeAfter: string; resumeAfterId: string | null }[] = [];
 
   // Named mocks, returned alongside the store: asserting through `store.listJobs` would
   // pass the method as a bare reference, which `unbound-method` correctly rejects.
+  //
+  // The four-argument signature carries `resumeAfterId` between the cursor and `limit`. A stub
+  // written against the old three-argument shape silently receives `null` where it expects
+  // `limit`, and every score comes back 0 — which is exactly what happened when this signature
+  // gained the tie-breaker.
   const listJobs = vi
     .fn()
-    .mockImplementation((_profileId: string, _resumeAfter: string | null, limit: number) =>
-      Promise.resolve(all.slice(0, limit)),
+    .mockImplementation(
+      (
+        _profileId: string,
+        _resumeAfter: string | null,
+        _resumeAfterId: string | null,
+        limit: number,
+      ) => Promise.resolve(all.slice(0, limit)),
     );
   const listJobSkills = vi.fn().mockResolvedValue([]);
   const saveScore = vi.fn().mockImplementation((score: { profileId: string; jobId: string; finalScore: number }) => {
@@ -115,10 +125,12 @@ function makeStore(opts: {
     });
     return { ok: true };
   });
-  const requeue = vi.fn().mockImplementation((profileId: string, resumeAfter: string) => {
-    requeues.push({ profileId, resumeAfter });
-    return Promise.resolve();
-  });
+  const requeue = vi
+    .fn()
+    .mockImplementation((profileId: string, resumeAfter: string, resumeAfterId: string | null) => {
+      requeues.push({ profileId, resumeAfter, resumeAfterId });
+      return Promise.resolve();
+    });
 
   const store: RescoreStore = {
     // The real store limits the page; a double that ignored `limit` would let a planner
@@ -191,6 +203,63 @@ describe("planRescoreBatch — bounded batch, re-enqueue if incomplete", () => {
     const before = JSON.stringify(jobs);
     planRescoreBatch({ jobs, batchSize: 1 }, 1);
     expect(JSON.stringify(jobs)).toBe(before);
+  });
+});
+
+/**
+ * The three defects that made the rescore never terminate. All found by watching a live queue
+ * rather than by reading code — see docs/07 session 10.
+ */
+describe("planRescoreBatch — termination (regressions from the live queue)", () => {
+  it("reports done on an exhausted cursor instead of re-enqueueing forever", () => {
+    // The infinite loop. With the cursor past the last job the store returns **zero** rows, and
+    // the old completeness test was `jobs.length >= total` — `0 >= 306` is false, so it
+    // re-enqueued, the re-enqueue wrote an empty cursor, and the empty cursor meant "no cursor",
+    // restarting the scan from the top. `verdict` was `"requeue"` on every batch, forever, and
+    // production burned a Vercel invocation per minute for nothing.
+    const verdict = planRescoreBatch({ jobs: [], batchSize: 100 }, 306);
+    expect(verdict.kind).toBe("done");
+  });
+
+  it("reports done when the last page is short, even if total disagrees", () => {
+    // A short page is only reachable when the cursor is exhausted — the store applies
+    // `LIMIT batchSize` *after* the filter. `total` counting every job in the corpus rather than
+    // the jobs remaining after the cursor is precisely why the old test could not fire.
+    const jobs = Array.from({ length: 91 }, (_, i) => job(`j${i}`));
+    expect(planRescoreBatch({ jobs, batchSize: 100 }, 306).kind).toBe("done");
+  });
+
+  it("still re-enqueues a full page, so a large feed is not declared finished early", () => {
+    // The counterweight: the short-page signal must not weaken the guarantee the existing
+    // `total` check provides. 100 returned against a limit of 100 says nothing about what is
+    // behind it.
+    const jobs = Array.from({ length: 100 }, (_, i) => job(`j${i}`));
+    expect(planRescoreBatch({ jobs, batchSize: 100 }, 306).kind).toBe("requeue");
+  });
+
+  it("carries the cursor's id, so jobs sharing a posted_at are not skipped", () => {
+    // The silent data loss. A strict `lt(posted_at, cursor)` skips every job sharing the cursor's
+    // timestamp; 30 jobs shared one on the linked project, and 15 jobs were never scored at all.
+    // The composite cursor is what makes the scan a total order over the page.
+    const jobs = Array.from({ length: 100 }, (_, i) => job(`j${i}`));
+    const verdict = planRescoreBatch({ jobs, batchSize: 100 }, 250);
+    expect(verdict.kind).toBe("requeue");
+    if (verdict.kind !== "requeue") return;
+    expect(verdict.resumeAfter).toBe(jobs[99]?.posted_at);
+    expect(verdict.resumeAfterId).toBe(jobs[99]?.id);
+  });
+
+  it("sends a null cursor id when the cursor's posted_at is null", () => {
+    // A null timestamp cannot participate in the lexicographic comparison at all, so the id is
+    // withheld rather than paired with a `null` the filter would have to special-case.
+    const jobs = Array.from({ length: 100 }, (_, i) =>
+      job(`j${i}`, { posted_at: i === 99 ? null : NOW.toISOString() }),
+    );
+    const verdict = planRescoreBatch({ jobs, batchSize: 100 }, 101);
+    expect(verdict.kind).toBe("requeue");
+    if (verdict.kind !== "requeue") return;
+    expect(verdict.resumeAfter).toBe("");
+    expect(verdict.resumeAfterId).toBeNull();
   });
 });
 
@@ -312,7 +381,21 @@ describe("runRescoreProfile", () => {
       resumeAfter: "2026-10-01T00:00:00.000Z",
       now: NOW,
     });
-    expect(listJobs.mock.calls[0]).toEqual(["p1", "2026-10-01T00:00:00.000Z", 100]);
+    // Four arguments now: the cursor's id sits between the timestamp and `limit`, and is null
+    // when the caller supplied none.
+    expect(listJobs.mock.calls[0]).toEqual(["p1", "2026-10-01T00:00:00.000Z", null, 100]);
+  });
+
+  it("passes the cursor's id through to the store", async () => {
+    const { store, listJobs } = makeStore({ jobs: [job("j1")], total: 1 });
+    await runRescoreProfile({
+      store,
+      profile: profile(),
+      resumeAfter: "2026-10-01T00:00:00.000Z",
+      resumeAfterId: "job-42",
+      now: NOW,
+    });
+    expect(listJobs.mock.calls[0]).toEqual(["p1", "2026-10-01T00:00:00.000Z", "job-42", 100]);
   });
 
   it("scores a real semantic blend when both embeddings exist", async () => {

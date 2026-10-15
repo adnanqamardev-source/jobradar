@@ -228,6 +228,26 @@ detail lives in the tables above; here is only the rule and its trigger.
   what *else* stops working?" Here the answer was "scoring, for everyone, permanently" — which is
   why a single bad row is a severity-1 incident rather than a retry. Pointer: the two-statement
   reap in `0013`, where the guard is per-profile so one profile's bad state cannot block another's.
+- **A cursor over a non-unique column silently drops rows.** Trigger: any `lt`/`gt` cursor on
+  `posted_at`, `created_at`, `updated_at`, or anything else a tie is possible on. Run: count the
+  distinct values — `select posted_at, count(*) from jobs group by 1 having count(*) > 1` — then
+  check scored-vs-total per profile. Symptom: a loop that never drains, or a total that is short by
+  exactly the size of the largest tie group. Measured: 291/306 scored, 30 jobs sharing one
+  `posted_at`, 15 lost. Cause: `lt(posted_at, cursor)` skips every row sharing the cursor's value.
+  Pointer: the composite cursor in docs/02b §6.4 — `posted_at < C OR (posted_at = C AND id > I)`,
+  so `(posted_at, id)` is a total order and every row is visited exactly once.
+- **A paginating loop needs a termination test, not just a progress test.** Trigger: a batch
+  handler that re-enqueues itself. Symptom: `verdict` is always the requeue variant and the queue
+  never empties. Cause: completeness was `jobs.length >= total`, where `total` counts the whole
+  corpus rather than what remains after the cursor, so an exhausted cursor read as "incomplete".
+  Pointer: a short page (`jobs.length < batchSize`) is proof of exhaustion because `LIMIT` is
+  applied *after* the filter. **Watch the real queue, not the unit tests** — the planner was fully
+  green while production logged `"verdict":"requeue"` every minute for hours.
+- **An insert whose error is ignored is a silent data loss.** Trigger: `await supabase.from(...).insert(...)`
+  with no `{ error }` destructure, especially against a table with a unique index. Symptom: work
+  vanishes and nothing says so. Pointer: `rescore-store.ts` `requeue()` — now logs, because the
+  partial unique index makes that insert collide routinely and benignly, which is exactly the case
+  an ignored error hides best.
 - **PowerShell 5.1 on this machine.** No `&&` (use one command per line, or `;`), and
   `supabase` is not on PATH — use `pnpm exec supabase …` or `node_modules\.bin\supabase.cmd`.
   Also: judge `eslint`/`build`/`supabase` by `$LASTEXITCODE`, not by the red stderr, because

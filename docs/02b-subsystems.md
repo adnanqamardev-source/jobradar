@@ -314,6 +314,52 @@ The reap is now two statements, in order:
 Pinned by `tests/integration/claim-reaper.db.test.ts`, which needs a real database because the
 bug requires two rows in a state the enqueue path is designed to prevent.
 
+**Amended 2026-10-15 — the rescore cursor, and why the batch could never terminate.** With the
+queue unblocked, a third set of defects became visible. All three were found by watching a live
+queue, and all three were in the production log before any of them was fixed.
+
+1. **A rescore could never terminate.** `planRescoreBatch` decided completeness with
+   `jobs.length >= total`, where `total` is `countRemaining()` — a count of *every* job in the
+   corpus, not the jobs remaining *after* the cursor. With the cursor exhausted the store returns
+   zero rows, `0 >= 306` is false, so it re-enqueued. The requeue wrote an empty cursor, `""` is
+   falsy, so `if (resumeAfter)` dropped it and the scan restarted from the top. A **three-state
+   cycle**: production logged `verdict: "requeue"` on every batch, forever, burning a Vercel
+   invocation per minute, and the queue never drained.
+
+   Completeness is now `jobs.length >= total || jobs.length < batchSize`. The second signal is
+   sound because the store applies `LIMIT batchSize` *after* the cursor filter, so a short page is
+   only reachable when the cursor is exhausted. The `total` check stays, because a feed that is
+   *exactly* one batch long is a complete feed, and nothing else can tell it apart from a full page
+   with more behind it.
+
+2. **The cursor must be a pair, not a timestamp.** The page is ordered `posted_at DESC, id ASC`
+   and the filter was a strict `lt("posted_at", cursor)`, which skips every job sharing the
+   cursor's timestamp. `posted_at` is not unique — **30 jobs shared one timestamp** on the linked
+   project — so those jobs were skipped on every subsequent page and never scored at all.
+   Measured: **291 of 306 jobs scored, and the 15 missing were exactly the ties.** Nothing in the
+   UI hinted at it; the feed simply looked complete.
+
+   The cursor is now `(posted_at, id)`, carried as `resume_after` plus `resume_after_id`, and
+   applied in the OR form PostgREST needs because it cannot express a row-value comparison:
+
+   ```
+   posted_at < C   OR   (posted_at = C AND id > I)
+   ```
+
+   `id >` because `id` ascends *within* a timestamp, so "further along the page" at the same
+   `posted_at` is a larger id. The pair is a total order over the page, which is what makes the
+   scan visit every row exactly once. A cursor whose `posted_at` is null sends a null id and falls
+   back to the timestamp-only filter — lossy as before, and never newly wrong.
+
+3. **`requeue()` ignored its insert error.** `idx_task_queue_one_pending_rescore_per_profile`
+   makes that insert collide whenever a pending task for the profile already exists. A collision
+   is benign — the existing task covers the same jobs — but it failed *silently*, which is exactly
+   how a lost requeue would be misread as a scoring bug. It now logs rather than throws.
+
+**Verified after the fix:** the queue drained to zero in four passes and every scored profile went
+from **291/306 to 306/306**. Pinned by `tests/unit/rescore-profile.test.ts` ("termination
+(regressions from the live queue)"), each guard proven to fail against the pre-fix code first.
+
 > **Still open.** `task_queue.payload` is `jsonb`, so it cannot carry a foreign key to `profiles`.
 > Deleting a user cascades `profiles` but leaves every queued task behind, and the worker keeps
 > claiming tasks for profiles that no longer exist (95 of 100 pending rescore tasks on the linked

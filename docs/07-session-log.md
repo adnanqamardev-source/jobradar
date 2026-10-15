@@ -2860,3 +2860,59 @@ the pre-0013 reap by hand against the same fixture:
 | 0013 step 1 | SUCCEEDED | `pending, pending` |
 
 and the lease guard by the test above failing against 0013.
+
+### Then the loop the wedge had been hiding
+
+With the queue unblocked, I watched it drain — and it **never converged**. Every pass claimed 6,
+completed 6, and scores froze at 291. The production log showed why, and it was not a local
+artifact:
+
+```
+scored: 100, verdict: "requeue"  ->  scored: 91, verdict: "requeue"  ->  …
+worker: vercel-006ba25f-…
+```
+
+`verdict: "requeue"` had **never** been `"done"`. A Vercel invocation every minute, forever.
+
+| # | Defect | Consequence |
+|---|---|---|
+| 1 | Completeness was `jobs.length >= total`, where `total` counts *all* jobs, not those remaining after the cursor. An exhausted cursor returns 0 rows, `0 >= 306` is false, so it re-enqueued — writing `""`, which `if (resumeAfter)` treats as *no cursor*, restarting from the top. | A three-state cycle. The queue never drained. |
+| 2 | The cursor was a bare `posted_at` with a strict `lt()`, so every job **sharing** the cursor's timestamp was skipped forever. 30 jobs shared one timestamp. | 291 of 306 scored; the 15 missing were exactly the ties. Invisible in the UI — the feed just looked complete. |
+| 3 | `rescore-store.requeue()` never checked `.error`, and the partial unique index makes that insert collide routinely. | A lost requeue would look like a scoring bug. |
+
+Fixes: completeness gains `|| jobs.length < batchSize` (sound because `LIMIT` applies after the
+filter, so a short page can only mean exhausted — and the `total` check stays, because a feed that
+is *exactly* one batch is complete and nothing else distinguishes it). The cursor becomes
+`(posted_at, id)`, applied as `posted_at < C OR (posted_at = C AND id > I)`, since PostgREST cannot
+express a row-value comparison. `requeue()` logs its insert error instead of swallowing it.
+
+**The `total` check was not removable**, which surprised me: `tests/unit/rescore-profile.test.ts`
+already pinned "feed is exactly one batch → done", and 10 jobs against a limit of 10 is complete.
+The fix had to be *additive*, not a replacement, or a correct test would have been rewritten to
+match a bug.
+
+### Verified
+
+```
+queue drained: pass 1..3 claimed=6, pass 4 claimed=0
+scores: 291/306  ->  306/306   (6 of 6 scored profiles)
+pending tasks: 0
+```
+
+The seventh profile has 0 scores and no pending task because it never completed onboarding
+(`target_titles: []`), so nothing enqueued a rescore — correct, not a defect.
+
+Each guard was proven to **fail** against the pre-fix code first: reverting the completion line
+failed 2 tests, reverting the cursor id failed 3.
+
+### Also
+
+The existing `listJobs` test stub was written against the old three-argument signature, so adding
+`resumeAfterId` in the middle silently fed it `null` where it expected `limit` — every score came
+back 0 and 10 unrelated tests failed. A widened positional signature is a breaking change to every
+call site, including doubles. The stub now carries the four-argument shape with a comment saying
+why.
+
+### Gates
+
+`typecheck exit=0` - `lint exit=0` - **1051 passed | 0 skipped** (59 files) - `pnpm build` green.

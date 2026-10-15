@@ -56,6 +56,9 @@ export const HANDLERS: HandlerRegistry = {
     const payload = task.payload;
     const profileId = payload.profile_id;
     const resumeAfter = payload.resume_after;
+    // The tie-breaker half of the composite cursor. Absent on tasks enqueued before 2026-10-15,
+    // which then fall back to the timestamp-only filter rather than failing.
+    const resumeAfterId = payload.resume_after_id;
 
     if (typeof profileId !== "string" || profileId.length === 0) {
       return { ok: false, error: "rescore_profile: payload.profile_id is missing or not a string" };
@@ -80,6 +83,7 @@ export const HANDLERS: HandlerRegistry = {
       store,
       profile,
       resumeAfter: typeof resumeAfter === "string" ? resumeAfter : null,
+        resumeAfterId: typeof resumeAfterId === "string" ? resumeAfterId : null,
       now,
     });
 

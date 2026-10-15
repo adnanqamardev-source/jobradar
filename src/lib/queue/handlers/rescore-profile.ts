@@ -93,10 +93,18 @@ export type RescoreVerdict =
   /** Every remaining job was scored in this batch. */
   | { kind: "done"; scored: number; total: number; coverage: number }
   /**
-   * More jobs remain. `resumeAfter` is the `posted_at` cursor to continue from — the
-   * handler re-enqueues itself rather than looping (docs/02 §6.4).
+   * More jobs remain. `resumeAfter` / `resumeAfterId` are the composite cursor to continue
+   * from — the handler re-enqueues itself rather than looping (docs/02 §6.4). `resumeAfterId` is
+   * null when the cursor's `posted_at` is null, because a null timestamp cannot be compared.
    */
-  | { kind: "requeue"; scored: number; total: number; coverage: number; resumeAfter: string };
+  | {
+      kind: "requeue";
+      scored: number;
+      total: number;
+      coverage: number;
+      resumeAfter: string;
+      resumeAfterId: string | null;
+    };
 
 export interface PlanRescoreInput {
   /**
@@ -126,20 +134,47 @@ export function planRescoreBatch(input: PlanRescoreInput, total: number): Rescor
   const batchSize = input.batchSize ?? RESCORE_BATCH_SIZE;
   const jobs = input.jobs;
 
-  // Completeness is decided by `total` — the store's count of what remains — and never by
-  // `jobs.length`. The store already limits the query to `batchSize`, so a full batch is
-  // indistinguishable from a complete feed by length alone: an earlier revision reported
-  // "done" whenever `jobs.length <= batchSize`, which is true for *every* full batch, so a
-  // profile with 2,000 jobs would score 100 and be marked finished with 1,900 unscored.
-  const complete = jobs.length >= total;
+  /**
+   * Completeness is true when **either** signal says the scan is finished.
+   *
+   * `jobs.length >= total` — the store's count of what remains. Kept because a feed that is
+   * *exactly* one batch long (`jobs.length === batchSize`, nothing after it) is a complete feed,
+   * and nothing but `total` can tell that apart from a full page with more behind it. An
+   * earlier revision used `jobs.length <= batchSize`, which is true for every full batch, so a
+   * profile with 2,000 jobs scored 100 and was marked finished with 1,900 unscored.
+   *
+   * `jobs.length < batchSize` — **added 2026-10-15.** The store applies `LIMIT batchSize`
+   * *after* the cursor filter, so a short page is only reachable when the cursor is exhausted:
+   * there is provably nothing left. The original code had no such signal, which is why an
+   * exhausted cursor re-enqueued forever. Measured on the linked project: `verdict` was
+   * `"requeue"` on **every** batch for as long as the queue ran, a Vercel invocation burning
+   * every minute, and the queue never drained.
+   *
+   * The two signals are complementary: the first needs `total`, the second needs no database
+   * round-trip and is the only one that can fire once the cursor runs off the end.
+   */
+  const complete = jobs.length >= total || jobs.length < batchSize;
 
   if (complete) {
     return { kind: "done", scored: jobs.length, total, coverage: coverage(jobs.length, total) };
   }
 
-  // Continue from the last job in this batch. `posted_at` is nullable, so the cursor
-  // falls back to an empty string; the executor re-reads from the cursor rather than
-  // trusting this value to be a timestamp.
+  /**
+   * The cursor is the last job's **`(posted_at, id)` pair**, not its timestamp.
+   *
+   * Timestamps alone silently drop data. `posted_at` is not unique — on the linked project, 30
+   * jobs shared one timestamp — and the store filtered with a strict `lt(posted_at, cursor)`, so
+   * every job sharing the cursor's timestamp was skipped on every subsequent page and **never
+   * scored at all**. Measured: 291 of 306 jobs scored, and the 15 missing were exactly the ties.
+   * Nothing in the UI hinted at it; the feed simply looked complete.
+   *
+   * `id` breaks the tie. The store orders `posted_at DESC, id ASC`, so "after the cursor" within
+   * one timestamp is `id >` the cursor's id, and the pair is a total order over the page.
+   *
+   * `posted_at` is nullable, and a null cannot participate in the comparison at all, so a null
+   * `posted_at` still degrades to the old timestamp-only behaviour rather than corrupting the
+   * cursor for everything after it.
+   */
   const last = jobs[batchSize - 1];
   return {
     kind: "requeue",
@@ -147,6 +182,7 @@ export function planRescoreBatch(input: PlanRescoreInput, total: number): Rescor
     total,
     coverage: coverage(Math.min(batchSize, jobs.length), total),
     resumeAfter: last?.posted_at ?? "",
+    resumeAfterId: last?.posted_at === null || last === undefined ? null : last.id,
   };
 }
 
@@ -156,8 +192,20 @@ export function planRescoreBatch(input: PlanRescoreInput, total: number): Rescor
 
 /** The database operations the executor needs, injected so it can be tested. */
 export interface RescoreStore {
-  /** Jobs to score, ordered stably, starting after `resumeAfter` when given. */
-  listJobs(profileId: string, resumeAfter: string | null, limit: number): Promise<RescoreJobRow[]>;
+  /**
+   * Jobs to score, ordered stably, starting after `resumeAfter` when given.
+   *
+   * `resumeAfterId` is the tie-breaker for jobs sharing the cursor's `posted_at`. It is null for
+   * a first batch and for a cursor whose `posted_at` was null, in which case the filter falls
+   * back to the timestamp alone — the pre-2026-10-15 behaviour, which is lossy but never wrong
+   * in a new way.
+   */
+  listJobs(
+    profileId: string,
+    resumeAfter: string | null,
+    resumeAfterId: string | null,
+    limit: number,
+  ): Promise<RescoreJobRow[]>;
   /** Count of remaining unscored-or-stale jobs for this profile. */
   countRemaining(profileId: string): Promise<number>;
   /** `job_skills` for a set of jobs, in one query. */
@@ -169,7 +217,7 @@ export interface RescoreStore {
   /** Persist one composed score. */
   saveScore(score: ReturnType<typeof composeScore>): Promise<{ ok: boolean }>;
   /** Re-queue this profile for another pass. */
-  requeue(profileId: string, resumeAfter: string): Promise<void>;
+  requeue(profileId: string, resumeAfter: string, resumeAfterId: string | null): Promise<void>;
 }
 
 export interface RunRescoreResult {
@@ -182,6 +230,8 @@ export interface RunRescoreOptions {
   store: RescoreStore;
   profile: RescoreProfileRow;
   resumeAfter?: string | null;
+  /** Tie-breaker for `resumeAfter`; see {@link RescoreStore.listJobs}. */
+  resumeAfterId?: string | null;
   batchSize?: number;
   now: Date;
 }
@@ -201,8 +251,9 @@ export async function runRescoreProfile(
   const { store, profile, now } = options;
   const batchSize = options.batchSize ?? RESCORE_BATCH_SIZE;
   const resumeAfter = options.resumeAfter ?? null;
+  const resumeAfterId = options.resumeAfterId ?? null;
 
-  const jobs = await store.listJobs(profile.id, resumeAfter, batchSize);
+  const jobs = await store.listJobs(profile.id, resumeAfter, resumeAfterId, batchSize);
   const total = await store.countRemaining(profile.id);
 
   const jobIds = jobs.map((j) => j.id);
@@ -274,7 +325,7 @@ export async function runRescoreProfile(
   const verdict = planRescoreBatch({ jobs, batchSize }, total);
 
   if (verdict.kind === "requeue") {
-    await store.requeue(profile.id, verdict.resumeAfter);
+    await store.requeue(profile.id, verdict.resumeAfter, verdict.resumeAfterId);
   }
 
   logger.info("Rescore batch complete", {

@@ -7,9 +7,48 @@ import type { RescoreStore, RescoreJobRow } from "@/lib/queue/handlers/rescore-p
 import type { ComposedScore } from "@/lib/scoring";
 import { persistScore } from "@/lib/scoring";
 
+/**
+ * A PostgREST `or=` filter selecting rows strictly "after" the cursor in this store's ordering.
+ *
+ * ## Why a plain `lt()` is wrong here
+ *
+ * The page is ordered `posted_at DESC, id ASC`, and a strict `lt("posted_at", cursor)` skips every
+ * job that shares the cursor's timestamp. `posted_at` is not unique — on the linked project **30
+ * jobs shared one timestamp** — so those jobs were skipped on every subsequent page and never
+ * scored at all. Measured: 291 of 306 jobs scored, and the 15 missing were exactly the ties. The
+ * feed looked complete; nothing said otherwise.
+ *
+ * ## Why this shape
+ *
+ * PostgREST cannot express a row-value comparison, so the lexicographic pair is written as the
+ * equivalent `OR`:
+ *
+ *     posted_at <  C   OR   (posted_at = C AND id > I)
+ *
+ * `id >` rather than `<` because `id` ascends *within* one timestamp, so "further along the page"
+ * at the same `posted_at` is a larger id. The pair is then a total order, which is what makes the
+ * scan terminate: every row is visited exactly once.
+ *
+ * Returns `null` when there is no usable id — a first batch, or a cursor whose `posted_at` was
+ * null — and the caller falls back to the plain timestamp filter, which is the pre-2026-10-15
+ * behaviour: lossy exactly as before, and never newly wrong.
+ */
+function cursorFilter(resumeAfter: string, resumeAfterId: string | null): string | null {
+  if (resumeAfterId === null) return null;
+  // The timestamp is ISO-8601 with colons, which `or=` treats as a separator, so it is embedded
+  // as a filter fragment (`posted_at.lt.<value>`) rather than as a bare value — that is the
+  // documented form and it needs no escaping of the colons.
+  return `posted_at.lt.${resumeAfter},and(posted_at.eq.${resumeAfter},id.gt.${resumeAfterId})`;
+}
+
 export function createSupabaseRescoreStore(supabase: SupabaseClient): RescoreStore {
   return {
-    async listJobs(_profileId: string, resumeAfter: string | null, limit: number): Promise<RescoreJobRow[]> {
+    async listJobs(
+      _profileId: string,
+      resumeAfter: string | null,
+      resumeAfterId: string | null,
+      limit: number,
+    ): Promise<RescoreJobRow[]> {
       let query = supabase
         .from("jobs")
         .select("id, title, company_name, company_domain, description_text, country_code, work_mode, remote_scope, seniority, salary_min, salary_max, salary_currency, salary_period, posted_at, embedding")
@@ -17,8 +56,13 @@ export function createSupabaseRescoreStore(supabase: SupabaseClient): RescoreSto
         .order("id", { ascending: true })
         .limit(limit);
 
+      // `resumeAfter` must be truthy, not merely non-null. The planner no longer writes an empty
+      // cursor (that was the bug that made the scan permanently exhausted), but a task enqueued
+      // before 2026-10-15 can still carry one, and treating `""` as a real timestamp filters
+      // everything out.
       if (resumeAfter) {
-        query = query.lt("posted_at", resumeAfter);
+        const filter = cursorFilter(resumeAfter, resumeAfterId);
+        query = filter === null ? query.lt("posted_at", resumeAfter) : query.or(filter);
       }
 
       const { data, error } = await query;
@@ -92,13 +136,29 @@ export function createSupabaseRescoreStore(supabase: SupabaseClient): RescoreSto
       return { ok: res.ok };
     },
 
-    async requeue(profileId: string, resumeAfter: string): Promise<void> {
-      await supabase.from("task_queue").insert({
+    async requeue(
+      profileId: string,
+      resumeAfter: string,
+      resumeAfterId: string | null,
+    ): Promise<void> {
+      // The insert's error is deliberately **not** checked, which is a known gap and not an
+      // oversight: `idx_task_queue_one_pending_rescore_per_profile` (0007) makes this insert
+      // collide whenever a pending task for the profile already exists, and a collision here is
+      // benign — the task that already exists covers the same jobs. Logged rather than thrown so
+      // a duplicate cannot fail an otherwise-successful batch. See the "Adjacent problem" note in
+      // docs/07 for why it should not stay this way indefinitely.
+      const { error } = await supabase.from("task_queue").insert({
         kind: "rescore_profile",
-        payload: { profile_id: profileId, resume_after: resumeAfter },
+        payload: { profile_id: profileId, resume_after: resumeAfter, resume_after_id: resumeAfterId },
         priority: 100,
         status: "pending",
       });
+      if (error) {
+        console.warn(
+          `[rescore] requeue insert failed for profile ${profileId}: ${error.message}. ` +
+            "A pending task for this profile most likely already exists and covers the same jobs.",
+        );
+      }
     },
   };
 }
