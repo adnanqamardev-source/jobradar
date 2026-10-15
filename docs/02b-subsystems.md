@@ -339,8 +339,14 @@ queue, and all three were in the production log before any of them was fixed.
    Measured: **291 of 306 jobs scored, and the 15 missing were exactly the ties.** Nothing in the
    UI hinted at it; the feed simply looked complete.
 
-   The cursor is now `(posted_at, id)`, carried as `resume_after` plus `resume_after_id`, and
-   applied in the OR form PostgREST needs because it cannot express a row-value comparison:
+   The cursor is now `(posted_at, id)`, carried as `resume_after` plus `resume_after_id` on the task
+   payload, and held in memory as one named object — `RescoreCursor { postedAt, id }` — rather than
+   as positional arguments. `listJobs` correspondingly takes
+   `{ cursor: RescoreCursor | null; limit: number }`. That is not cosmetic: the positional version
+   broke every test double when the id was added, because inserting a parameter shifted `limit` into
+   the third slot, so `null` arrived where the stub expected a number, every score came back 0, and
+   ten tests failed without naming the signature. The store applies it in the OR form PostgREST
+   needs because it cannot express a row-value comparison:
 
    ```
    posted_at < C   OR   (posted_at = C AND id > I)

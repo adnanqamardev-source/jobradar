@@ -3,7 +3,11 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { RescoreStore, RescoreJobRow } from "@/lib/queue/handlers/rescore-profile";
+import type {
+  RescoreCursor,
+  RescoreJobRow,
+  RescoreStore,
+} from "@/lib/queue/handlers/rescore-profile";
 import type { ComposedScore } from "@/lib/scoring";
 import { persistScore } from "@/lib/scoring";
 
@@ -33,22 +37,21 @@ import { persistScore } from "@/lib/scoring";
  * null — and the caller falls back to the plain timestamp filter, which is the pre-2026-10-15
  * behaviour: lossy exactly as before, and never newly wrong.
  */
-function cursorFilter(resumeAfter: string, resumeAfterId: string | null): string | null {
-  if (resumeAfterId === null) return null;
+function cursorFilter(cursor: RescoreCursor): string | null {
+  if (cursor.id === null) return null;
   // The timestamp is ISO-8601 with colons, which `or=` treats as a separator, so it is embedded
   // as a filter fragment (`posted_at.lt.<value>`) rather than as a bare value — that is the
   // documented form and it needs no escaping of the colons.
-  return `posted_at.lt.${resumeAfter},and(posted_at.eq.${resumeAfter},id.gt.${resumeAfterId})`;
+  return `posted_at.lt.${cursor.postedAt},and(posted_at.eq.${cursor.postedAt},id.gt.${cursor.id})`;
 }
 
 export function createSupabaseRescoreStore(supabase: SupabaseClient): RescoreStore {
   return {
     async listJobs(
       _profileId: string,
-      resumeAfter: string | null,
-      resumeAfterId: string | null,
-      limit: number,
+      options: { cursor: RescoreCursor | null; limit: number },
     ): Promise<RescoreJobRow[]> {
+      const { cursor, limit } = options;
       let query = supabase
         .from("jobs")
         .select("id, title, company_name, company_domain, description_text, country_code, work_mode, remote_scope, seniority, salary_min, salary_max, salary_currency, salary_period, posted_at, embedding")
@@ -56,13 +59,13 @@ export function createSupabaseRescoreStore(supabase: SupabaseClient): RescoreSto
         .order("id", { ascending: true })
         .limit(limit);
 
-      // `resumeAfter` must be truthy, not merely non-null. The planner no longer writes an empty
-      // cursor (that was the bug that made the scan permanently exhausted), but a task enqueued
-      // before 2026-10-15 can still carry one, and treating `""` as a real timestamp filters
-      // everything out.
-      if (resumeAfter) {
-        const filter = cursorFilter(resumeAfter, resumeAfterId);
-        query = filter === null ? query.lt("posted_at", resumeAfter) : query.or(filter);
+      // `cursor.postedAt` must be truthy, not merely non-null. The planner no longer writes an
+      // empty cursor (that was the bug that made the scan permanently exhausted), but a task
+      // enqueued before 2026-10-15 can still carry one, and treating `""` as a real timestamp
+      // filters everything out.
+      if (cursor?.postedAt) {
+        const filter = cursorFilter(cursor);
+        query = filter === null ? query.lt("posted_at", cursor.postedAt) : query.or(filter);
       }
 
       const { data, error } = await query;
@@ -136,11 +139,7 @@ export function createSupabaseRescoreStore(supabase: SupabaseClient): RescoreSto
       return { ok: res.ok };
     },
 
-    async requeue(
-      profileId: string,
-      resumeAfter: string,
-      resumeAfterId: string | null,
-    ): Promise<void> {
+    async requeue(profileId: string, cursor: RescoreCursor): Promise<void> {
       // The insert's error is deliberately **not** checked, which is a known gap and not an
       // oversight: `idx_task_queue_one_pending_rescore_per_profile` (0007) makes this insert
       // collide whenever a pending task for the profile already exists, and a collision here is
@@ -149,7 +148,11 @@ export function createSupabaseRescoreStore(supabase: SupabaseClient): RescoreSto
       // docs/07 for why it should not stay this way indefinitely.
       const { error } = await supabase.from("task_queue").insert({
         kind: "rescore_profile",
-        payload: { profile_id: profileId, resume_after: resumeAfter, resume_after_id: resumeAfterId },
+        payload: {
+          profile_id: profileId,
+          resume_after: cursor.postedAt,
+          resume_after_id: cursor.id,
+        },
         priority: 100,
         status: "pending",
       });

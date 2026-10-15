@@ -96,24 +96,23 @@ function makeStore(opts: {
 }) {
   const all = opts.jobs ?? [];
   const saved: { profileId: string; jobId: string; finalScore: number }[] = [];
-  const requeues: { profileId: string; resumeAfter: string; resumeAfterId: string | null }[] = [];
+  const requeues: { profileId: string; cursor: { postedAt: string; id: string | null } }[] = [];
 
   // Named mocks, returned alongside the store: asserting through `store.listJobs` would
   // pass the method as a bare reference, which `unbound-method` correctly rejects.
   //
-  // The four-argument signature carries `resumeAfterId` between the cursor and `limit`. A stub
-  // written against the old three-argument shape silently receives `null` where it expects
-  // `limit`, and every score comes back 0 — which is exactly what happened when this signature
-  // gained the tie-breaker.
+  // `listJobs` takes an options object rather than positional arguments. It was positional:
+  // inserting the cursor's id shifted `limit` to third place, the double read `null` there,
+  // every score came back 0, and ten tests failed with no mention of the signature.
+  //
+  // Verified rather than asserted: adding a field to the options object (simulating the next
+  // cursor growth) leaves this stub working — it reads `options.limit` by name — and the only
+  // failures are the two strict `toEqual` assertions that document the call shape. So a signature
+  // change now surfaces as two named contract failures instead of ten silent zero-score ones.
   const listJobs = vi
     .fn()
-    .mockImplementation(
-      (
-        _profileId: string,
-        _resumeAfter: string | null,
-        _resumeAfterId: string | null,
-        limit: number,
-      ) => Promise.resolve(all.slice(0, limit)),
+    .mockImplementation((_profileId: string, options: { limit: number }) =>
+      Promise.resolve(all.slice(0, options.limit)),
     );
   const listJobSkills = vi.fn().mockResolvedValue([]);
   const saveScore = vi.fn().mockImplementation((score: { profileId: string; jobId: string; finalScore: number }) => {
@@ -127,8 +126,8 @@ function makeStore(opts: {
   });
   const requeue = vi
     .fn()
-    .mockImplementation((profileId: string, resumeAfter: string, resumeAfterId: string | null) => {
-      requeues.push({ profileId, resumeAfter, resumeAfterId });
+    .mockImplementation((profileId: string, cursor: { postedAt: string; id: string | null }) => {
+      requeues.push({ profileId, cursor });
       return Promise.resolve();
     });
 
@@ -170,7 +169,7 @@ describe("planRescoreBatch — bounded batch, re-enqueue if incomplete", () => {
     expect(verdict.scored).toBe(100);
     expect(verdict.total).toBe(250);
     expect(verdict.coverage).toBe(0.4);
-    expect(verdict.resumeAfter).toBe(jobs[99]?.posted_at);
+    expect(verdict.cursor.postedAt).toBe(jobs[99]?.posted_at);
   });
 
   it("does NOT claim completion for a partial batch", () => {
@@ -195,7 +194,7 @@ describe("planRescoreBatch — bounded batch, re-enqueue if incomplete", () => {
     const verdict = planRescoreBatch({ jobs, batchSize: 100 }, 101);
     expect(verdict.kind).toBe("requeue");
     if (verdict.kind !== "requeue") return;
-    expect(verdict.resumeAfter).toBe("");
+    expect(verdict.cursor.postedAt).toBe("");
   });
 
   it("is pure", () => {
@@ -245,8 +244,8 @@ describe("planRescoreBatch — termination (regressions from the live queue)", (
     const verdict = planRescoreBatch({ jobs, batchSize: 100 }, 250);
     expect(verdict.kind).toBe("requeue");
     if (verdict.kind !== "requeue") return;
-    expect(verdict.resumeAfter).toBe(jobs[99]?.posted_at);
-    expect(verdict.resumeAfterId).toBe(jobs[99]?.id);
+    expect(verdict.cursor.postedAt).toBe(jobs[99]?.posted_at);
+    expect(verdict.cursor.id).toBe(jobs[99]?.id);
   });
 
   it("sends a null cursor id when the cursor's posted_at is null", () => {
@@ -258,8 +257,8 @@ describe("planRescoreBatch — termination (regressions from the live queue)", (
     const verdict = planRescoreBatch({ jobs, batchSize: 100 }, 101);
     expect(verdict.kind).toBe("requeue");
     if (verdict.kind !== "requeue") return;
-    expect(verdict.resumeAfter).toBe("");
-    expect(verdict.resumeAfterId).toBeNull();
+    expect(verdict.cursor.postedAt).toBe("");
+    expect(verdict.cursor.id).toBeNull();
   });
 });
 
@@ -373,29 +372,41 @@ describe("runRescoreProfile", () => {
     expect(listJobSkills.mock.calls[0]?.[0]).toEqual(["j1", "j2"]);
   });
 
-  it("passes the resume cursor through to the store", async () => {
+  it("passes the cursor through to the store as one named object", async () => {
     const { store, listJobs } = makeStore({ jobs: [job("j1")], total: 1 });
     await runRescoreProfile({
       store,
       profile: profile(),
-      resumeAfter: "2026-10-01T00:00:00.000Z",
+      cursor: { postedAt: "2026-10-01T00:00:00.000Z", id: "job-42" },
       now: NOW,
     });
-    // Four arguments now: the cursor's id sits between the timestamp and `limit`, and is null
-    // when the caller supplied none.
-    expect(listJobs.mock.calls[0]).toEqual(["p1", "2026-10-01T00:00:00.000Z", null, 100]);
+
+    // One options object, not three positional arguments. The positional version is what broke:
+    // inserting the cursor's id shifted `limit` to third place, every double read `null` there,
+    // every score came back 0, and ten tests failed without naming the cause.
+    expect(listJobs.mock.calls[0]).toEqual([
+      "p1",
+      { cursor: { postedAt: "2026-10-01T00:00:00.000Z", id: "job-42" }, limit: 100 },
+    ]);
   });
 
-  it("passes the cursor's id through to the store", async () => {
+  it("passes a null cursor on a first batch", async () => {
     const { store, listJobs } = makeStore({ jobs: [job("j1")], total: 1 });
-    await runRescoreProfile({
-      store,
-      profile: profile(),
-      resumeAfter: "2026-10-01T00:00:00.000Z",
-      resumeAfterId: "job-42",
-      now: NOW,
-    });
-    expect(listJobs.mock.calls[0]).toEqual(["p1", "2026-10-01T00:00:00.000Z", "job-42", 100]);
+    await runRescoreProfile({ store, profile: profile(), now: NOW });
+
+    expect(listJobs.mock.calls[0]).toEqual(["p1", { cursor: null, limit: 100 }]);
+  });
+
+  it("re-enqueues with the cursor object the verdict produced", async () => {
+    // The cursor round-trips: planner -> requeue -> next batch, with both halves intact.
+    const jobs = Array.from({ length: 100 }, (_, i) => job(`j${i}`));
+    const { store, requeues } = makeStore({ jobs, total: 250 });
+
+    await runRescoreProfile({ store, profile: profile(), batchSize: 100, now: NOW });
+
+    expect(requeues).toEqual([
+      { profileId: "p1", cursor: { postedAt: jobs[99]?.posted_at, id: jobs[99]?.id } },
+    ]);
   });
 
   it("scores a real semantic blend when both embeddings exist", async () => {

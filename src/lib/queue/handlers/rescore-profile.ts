@@ -88,22 +88,50 @@ export interface RescoreProfileRow {
 // Pure planning
 // ---------------------------------------------------------------------------
 
+/**
+ * Where the next batch starts: the last row of the previous one.
+ *
+ * ## Why one object and not two positional strings
+ *
+ * It was `resumeAfter: string, resumeAfterId: string | null`, and widening that signature put
+ * `limit` in third position. Every existing test double then received `null` where it expected
+ * `limit`, so every score silently came back 0 and ten unrelated tests failed with no mention of
+ * the signature. TypeScript could not catch it: `string | null` is assignable from nothing the
+ * stub cared about, because the stub was not checking its parameters at all.
+ *
+ * A cursor has two halves that only make sense together, and it will grow a third if the ordering
+ * ever needs one. Positional arguments make every addition a silent breaking change to every call
+ * site — including the doubles, which is exactly where the breakage is least visible.
+ *
+ * The benefit is not that nothing breaks; a strict `toEqual` on the call shape still fails, and
+ * should. It is **where** it breaks. Measured both ways: adding a field to this options object
+ * leaves a stub that reads `options.limit` by name working, and the only failures are the two
+ * contract assertions naming the field. Adding a *positional* parameter broke the stub outright —
+ * `null` arrived where `limit` was expected, every score came back 0, and ten tests failed
+ * without mentioning the signature at all.
+ */
+export interface RescoreCursor {
+  /** ISO-8601 `posted_at` of the last row handed out. `""` means "no usable cursor". */
+  postedAt: string;
+  /** Tie-breaker for rows sharing `postedAt`; null when there is none or `postedAt` is null. */
+  id: string | null;
+}
+
 /** What the handler should do after processing a batch. */
 export type RescoreVerdict =
   /** Every remaining job was scored in this batch. */
   | { kind: "done"; scored: number; total: number; coverage: number }
   /**
-   * More jobs remain. `resumeAfter` / `resumeAfterId` are the composite cursor to continue
-   * from — the handler re-enqueues itself rather than looping (docs/02 §6.4). `resumeAfterId` is
-   * null when the cursor's `posted_at` is null, because a null timestamp cannot be compared.
+   * More jobs remain. `cursor` says where the next batch starts — the handler re-enqueues itself
+   * rather than looping (docs/02 §6.4). `cursor.id` is null when the cursor's `posted_at` is
+   * null, because a null timestamp cannot participate in the comparison at all.
    */
   | {
       kind: "requeue";
       scored: number;
       total: number;
       coverage: number;
-      resumeAfter: string;
-      resumeAfterId: string | null;
+      cursor: RescoreCursor;
     };
 
 export interface PlanRescoreInput {
@@ -181,8 +209,10 @@ export function planRescoreBatch(input: PlanRescoreInput, total: number): Rescor
     scored: Math.min(batchSize, jobs.length),
     total,
     coverage: coverage(Math.min(batchSize, jobs.length), total),
-    resumeAfter: last?.posted_at ?? "",
-    resumeAfterId: last?.posted_at === null || last === undefined ? null : last.id,
+    cursor: {
+      postedAt: last?.posted_at ?? "",
+      id: last?.posted_at === null || last === undefined ? null : last.id,
+    },
   };
 }
 
@@ -193,18 +223,15 @@ export function planRescoreBatch(input: PlanRescoreInput, total: number): Rescor
 /** The database operations the executor needs, injected so it can be tested. */
 export interface RescoreStore {
   /**
-   * Jobs to score, ordered stably, starting after `resumeAfter` when given.
+   * Jobs to score, ordered stably, starting after `cursor` when one is given.
    *
-   * `resumeAfterId` is the tie-breaker for jobs sharing the cursor's `posted_at`. It is null for
-   * a first batch and for a cursor whose `posted_at` was null, in which case the filter falls
-   * back to the timestamp alone — the pre-2026-10-15 behaviour, which is lossy but never wrong
-   * in a new way.
+   * Options object rather than positional arguments: see {@link RescoreCursor}. Widening a
+   * positional signature silently re-mapped every test double — `limit` arrived as `null`, every
+   * score came back 0, and nothing named the cause.
    */
   listJobs(
     profileId: string,
-    resumeAfter: string | null,
-    resumeAfterId: string | null,
-    limit: number,
+    options: { cursor: RescoreCursor | null; limit: number },
   ): Promise<RescoreJobRow[]>;
   /** Count of remaining unscored-or-stale jobs for this profile. */
   countRemaining(profileId: string): Promise<number>;
@@ -216,8 +243,8 @@ export interface RescoreStore {
   ): Promise<{ skill_id: string; level: "familiar" | "proficient" | "expert" | null }[]>;
   /** Persist one composed score. */
   saveScore(score: ReturnType<typeof composeScore>): Promise<{ ok: boolean }>;
-  /** Re-queue this profile for another pass. */
-  requeue(profileId: string, resumeAfter: string, resumeAfterId: string | null): Promise<void>;
+  /** Re-queue this profile for another pass, starting at `cursor`. */
+  requeue(profileId: string, cursor: RescoreCursor): Promise<void>;
 }
 
 export interface RunRescoreResult {
@@ -229,9 +256,8 @@ export interface RunRescoreResult {
 export interface RunRescoreOptions {
   store: RescoreStore;
   profile: RescoreProfileRow;
-  resumeAfter?: string | null;
-  /** Tie-breaker for `resumeAfter`; see {@link RescoreStore.listJobs}. */
-  resumeAfterId?: string | null;
+  /** Where this batch starts. Null for a first batch. */
+  cursor?: RescoreCursor | null;
   batchSize?: number;
   now: Date;
 }
@@ -250,10 +276,9 @@ export async function runRescoreProfile(
 ): Promise<RunRescoreResult> {
   const { store, profile, now } = options;
   const batchSize = options.batchSize ?? RESCORE_BATCH_SIZE;
-  const resumeAfter = options.resumeAfter ?? null;
-  const resumeAfterId = options.resumeAfterId ?? null;
+  const cursor = options.cursor ?? null;
 
-  const jobs = await store.listJobs(profile.id, resumeAfter, resumeAfterId, batchSize);
+  const jobs = await store.listJobs(profile.id, { cursor, limit: batchSize });
   const total = await store.countRemaining(profile.id);
 
   const jobIds = jobs.map((j) => j.id);
@@ -325,7 +350,7 @@ export async function runRescoreProfile(
   const verdict = planRescoreBatch({ jobs, batchSize }, total);
 
   if (verdict.kind === "requeue") {
-    await store.requeue(profile.id, verdict.resumeAfter, verdict.resumeAfterId);
+    await store.requeue(profile.id, verdict.cursor);
   }
 
   logger.info("Rescore batch complete", {

@@ -248,6 +248,17 @@ detail lives in the tables above; here is only the rule and its trigger.
   vanishes and nothing says so. Pointer: `rescore-store.ts` `requeue()` — now logs, because the
   partial unique index makes that insert collide routinely and benignly, which is exactly the case
   an ignored error hides best.
+- **Adding a positional parameter to a seam with test doubles breaks them silently.** Trigger:
+  inserting a parameter into any signature that a `vi.fn()`/stub implements — especially
+  *between* two existing ones. Symptom: the double receives the wrong argument, every call
+  returns empty, and the failures land in ten unrelated tests with no mention of the signature.
+  Run: after widening a seam, `pnpm vitest run <the double's test file>` and read the *first*
+  failure, not the count. Pointer: `RescoreStore.listJobs` now takes
+  `{ cursor: RescoreCursor | null; limit: number }`, and `RescoreCursor` is
+  `{ postedAt: string; id: string | null }`. Note what the fix does and does not buy: a strict
+  `toEqual` on the call shape still fails, and should — the gain is **where** it fails. Verified
+  both ways: adding a *field* to the options object left the stub working and produced only two
+  named contract failures; adding a *positional parameter* produced ten silent zero-score ones.
 - **PowerShell 5.1 on this machine.** No `&&` (use one command per line, or `;`), and
   `supabase` is not on PATH — use `pnpm exec supabase …` or `node_modules\.bin\supabase.cmd`.
   Also: judge `eslint`/`build`/`supabase` by `$LASTEXITCODE`, not by the red stderr, because

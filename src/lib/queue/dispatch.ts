@@ -55,9 +55,9 @@ export const HANDLERS: HandlerRegistry = {
   rescore_profile: async ({ task, now }) => {
     const payload = task.payload;
     const profileId = payload.profile_id;
+    // The cursor arrives as the two payload halves the store writes. Absent on tasks enqueued
+    // before 2026-10-15, which then fall back to a timestamp-only filter rather than failing.
     const resumeAfter = payload.resume_after;
-    // The tie-breaker half of the composite cursor. Absent on tasks enqueued before 2026-10-15,
-    // which then fall back to the timestamp-only filter rather than failing.
     const resumeAfterId = payload.resume_after_id;
 
     if (typeof profileId !== "string" || profileId.length === 0) {
@@ -82,8 +82,10 @@ export const HANDLERS: HandlerRegistry = {
     await runRescoreProfile({
       store,
       profile,
-      resumeAfter: typeof resumeAfter === "string" ? resumeAfter : null,
-        resumeAfterId: typeof resumeAfterId === "string" ? resumeAfterId : null,
+      cursor:
+          typeof resumeAfter === "string"
+            ? { postedAt: resumeAfter, id: typeof resumeAfterId === "string" ? resumeAfterId : null }
+            : null,
       now,
     });
 
