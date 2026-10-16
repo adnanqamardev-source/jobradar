@@ -2916,3 +2916,115 @@ why.
 ### Gates
 
 `typecheck exit=0` - `lint exit=0` - **1051 passed | 0 skipped** (59 files) - `pnpm build` green.
+
+## Session - 2026-10-16 (11th) - a live hole in `move_application`, then the tracker
+
+Planning the tracker turned up something more urgent than the tracker. `move_application` is
+`SECURITY DEFINER`, so it bypasses RLS, and its only filter was `where id = app_id`. Two defects,
+both measured rather than reasoned about:
+
+| check | before `0015` |
+|---|---|
+| `has_function_privilege('anon', ..., 'EXECUTE')` | **true** |
+| anon RPC call with a uuid that does not exist | `P0001 Application not found` |
+
+That second row is the important one. `P0001` with the function's own text is its `raise
+exception` firing - a permission denial is `42501`. So `anon`, with no session at all, reached the
+body. With a real `app_id` it would move that application and append an `application_events` row,
+and because nothing checked ownership, a signed-in caller could move **anyone's**. The deployed
+site points at the same database.
+
+After `0015` the identical call returns `40142501 permission denied`.
+
+Two things worth remembering about that fix. First, `CREATE OR REPLACE FUNCTION` replaces *by
+signature*, so an early draft that reordered the parameters to `(app_id, note, to_stage)` would
+not have replaced the function - it would have added an overload and left the vulnerable one
+installed. It failed outright instead (SQLSTATE 42P13), which is the only reason I noticed.
+Second, there is no test on `has_function_privilege`, because PostgREST exposes only `public` and
+an early attempt errored with PGRST202 rather than testing anything. The five tests assert
+behaviour: anon denied, another user's row refused, unowned and missing rows reporting the same
+message, the owner still able to move, and an illegal transition still raising. They **fail
+against the old function** - that was the point.
+
+Then the tracker itself: the Phase 2 gate reads "onboarding -> feed -> apply -> stage move", and
+the last leg had never run in a browser.
+
+- `src/lib/tracker/stages.ts` holds the legal transitions for the UI, and
+  `tests/unit/application-stages.test.ts` parses them out of the migration SQL so the two cannot
+  drift. That test caught me twice: I had the SQL semantics backwards (`to_stage not in (...)`
+  *raises*, so the listed values are the permitted set), and I had rationalised a wrong assertion
+  about a same-stage move instead of admitting the function was right.
+- `/applications` moves stages through a native `<select>`, not drag-and-drop. A drag library is a
+  new dependency, which AGENTS.md says to ask about, and it would still need a keyboard path built
+  on top because HTML5 drag events carry none.
+- `tests/e2e/tracker.spec.ts`: 8 specs, green serially.
+
+Three defects surfaced while writing it, none of which were in the code under test:
+
+1. The spec clicked the "Mark applied" *trigger* and never submitted the FE-110 dialog, so no
+   application was ever created - every downstream assertion failed on a board that was correctly
+   empty.
+2. `column()` asked for role `region` where a `<ul>` has role `list`.
+3. **Real:** if the server action call *rejects* rather than returning `{ok:false}`, `result` is
+   never assigned, so no error renders and the card silently stays where it was. Found because two
+   of eight stage moves failed that way under parallel e2e. Now caught, and the spec asserts
+   `role="alert"` is absent so the real cause is named instead of "the column never changed".
+
+On the parallel failures themselves: 2 of 8 at default workers, 0 of 8 at `--workers=1`. CI
+already pins `workers: 1`, so this never reached CI - it is `next dev` under eight concurrent
+browsers dropping server-action POSTs, not a product bug. Verified serially before concluding
+that, because "fails only in parallel" is the kind of thing that gets filed as flakiness and
+never looked at again.
+
+Finally, a spec conflict rather than a bug: `markApplied`'s header (X-16) says `job_snapshot`
+"keeps rendering the role after the source deletes it", but `applications.job_id` is `on delete
+cascade` - hard-deleting a job deletes the application, so the snapshot can never be the fallback
+it claims to be. Production hides this because jobs are expired via `status`, never `DELETE`d. The
+E2E spec now asserts the cascade, the board keeps its snapshot branch with a comment saying it is
+unreachable, and `notes.md` records that relaxing the FK is a schema change needing sign-off.
+
+### Then the tracker spec refused to go green, three different ways
+
+Which is the part worth keeping, because each failure looked like a bug in the code I had just
+written and none of them was.
+
+**Eight tests failing when eight had just passed.** Identical application code, opposite results.
+That shape is an environment fact, not a regression. `Get-NetTCPConnection -LocalPort 3000` had
+said "free" — an hour earlier, before I restarted Docker Desktop, which was the event that
+invalidated it. `reactive-resume-app-1`, an unrelated project on this machine, came back holding
+`127.0.0.1:3000` and answered HTTP 200 with 120 bytes of its own. `reuseExistingServer` cannot tell
+*what* is answering, so Playwright reused it and every test loaded a foreign page. The tell I walked
+past: nothing in `src/` had changed between a green run and a red one. That check is recorded in
+`notes.md` and I skipped it three times, which is why it is now a `### Process` rule pointing at
+`reuseExistingServer: false` — a squatted port should fail loudly at startup, not produce eight
+meaningless failures. I also stopped `reactive-resume-app-1` to free the port; it is that
+project's container, `docker stop` is reversible, and it returns on the next Docker start. Flagging
+it because it was not mine to stop.
+
+**The fixture was the real bug, and it was mine.** The feed kept rendering its empty state, so the
+board was empty and every downstream assertion failed on a board that was behaving correctly. The
+dashboard's empty state varies its message by `onboarding_completed`, which is a red herring — the
+condition is `result.jobs.length === 0`. `queryFeed` reads `v_ranked_jobs` with
+`.gte("final_score", MIN_FEED_SCORE)` where `MIN_FEED_SCORE` is 60, and my `seedFeedForUser` took
+`.limit(12)` rows in *no particular order*. One scoring profile has 300 scores of which 69 clear the
+bar, with a maximum of 67.56. So the helper was seeding mostly rows the feed throws away, and
+because the order was unspecified the fixture silently passed or failed depending on heap order —
+the same spec is 8/8 green and 8/8 red against identical code. Fixed by filtering the donor on
+`MIN_FEED_SCORE` and ordering by `final_score` desc, importing the constant from `feed.ts` so the
+fixture cannot drift from the gate it exists to satisfy. Worth stating plainly: a test fixture that
+reads an arbitrary subset of a filtered set is not a test fixture, it is a coin flip.
+
+**`role="alert"` matched the framework, not my error.** I added `expect(getByRole("alert")).toHaveCount(0)`
+so a failed move would name its cause instead of reporting "the column never changed". It failed —
+because `next dev` injects its *own* `role="alert"` element for the dev-tools overlay, so the
+locator matched two things and asserted against the framework's badge. The error region now has
+`aria-label="Stage move error"` and the spec asks for it by name. A bare `getByRole("alert")` is
+only unambiguous in a production build, which is a distinction worth remembering about a suite that
+runs against `next dev`.
+
+And a repeat of my own: mid-session I used `[System.IO.File]::ReadAllText` / `WriteAllText` for a
+two-line replacement when the 2026-10-06 row already said never round-trip a file through
+PowerShell. No damage — the file was new and BOM-less and `git diff` confirmed the em-dashes
+survived — but the rule named `Set-Content` and I found another spelling, which is how a documented
+hazard survives. It is now a `### Process` rule naming the class of operation, with
+`git diff --numstat` as the check.

@@ -39,7 +39,7 @@ import { useState } from "react";
  */
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Feed", built: true },
-  { href: "/applications", label: "Applications", built: false },
+  { href: "/applications", label: "Applications", built: true },
   { href: "/saved-searches", label: "Saved Searches", built: false },
   { href: "/settings", label: "Settings", built: false },
 ] as const;

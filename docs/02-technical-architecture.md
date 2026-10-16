@@ -220,7 +220,8 @@ jobradar/
 │   │   │   ├── admin.ts             #   service-role client — SERVER ONLY, sole holder of the import
 │   │   │   ├── user-client.ts       #   RLS-enforcing client (anon + user JWT) — BE-302, throws until built
 │   │   │   ├── server.ts            #   (planned) browser/SSR session client
-│   │   │   └── queries/             #   one file per read: jobs.ts, apps.ts…
+│   │   │   ├── queries/             #   one file per read: jobs.ts, apps.ts…
+│   │   │   └── tracker/             #   stages.ts - pipeline + legal moves, mirrored from move_application
 │   │   ├── auth/
 │   │   │   ├── session.ts           #   getServerSession(), requireUser()
 │   │   │   ├── require-user.ts      #   requireUser() guard seam — BE-302, throws until built

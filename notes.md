@@ -70,6 +70,9 @@ Non-deterministic test behaviour — intermittent failures, order-dependent resu
 | Date | What happened | Do this instead |
 |---|---|---|
 | 2026-10-04 | `playwright.config.ts` baseURL bug (see Broken loops) caused all 18 e2e tests to fail intermittently depending on whether `PLAYWRIGHT_TEST_BASE_URL` was set. The tests themselves were fine; the config made them order-dependent on environment state. | When tests fail only in certain environments, suspect the config before the tests. A test that passes locally but fails in CI is not flaky — it is environment-dependent, and the fix belongs in the config, not the test. |
+| 2026-10-16 | `tracker.spec.ts`: 2 of 8 failed at `--workers=1`'s default (parallel), 0 of 8 at `--workers=1`. The failing stage moves left the card in its original column with **no** error on the page. Cause: the server action call *rejected*, so `result` was never assigned — a silent no-op. `next dev` under 8 concurrent browsers drops server-action POSTs. CI already pins `workers: 1`, so CI never saw this. | `next dev` under parallel e2e load is not a reliable target. Verify suspicious parallel failures with `--workers=1` before treating them as product bugs — and catch rejected server actions, because a thrown action leaves the UI looking like the click did nothing. |
+| 2026-10-16 | **Repeated a second documented rule in the same session.** The 2026-10-06 row says *"use the edit/write tool for every file edit and never pipe file content through PowerShell"*. I read that, then used `[System.IO.File]::ReadAllText` / `WriteAllText` to do a two-line string replacement in `tests/e2e/tracker.spec.ts` — the same read-modify-write hazard, just spelled with the .NET overloads instead of `Set-Content`. No damage (the file was new and BOM-less, and `git diff` confirmed em-dashes and `→` intact), which is exactly what makes it worth writing down: the rule was breached for convenience and the outcome happened to be benign. | A rule phrased around one *spelling* is not a rule. It named `Set-Content`; I found another way to do the same thing, so in my judgement the rule did not apply — which is how a hazard survives being documented. Rules about *how* to do something must name the class of operation ("never round-trip a file through a shell"), not one function. The 2026-10-06 row is promoted into a `### Process` hard rule; the check is `git diff --numstat` on every edited file. |
+| 2026-10-16 | **Repeated a rule already in this file.** The "kill the old listener first" check was already recorded, and I skipped it three times. I checked port 3000 once early (free), then restarted Docker Desktop — which invalidated that check — and ran the suite anyway. `reactive-resume-app-1`, an unrelated project's container, published 127.0.0.1:3000 when Docker came back and returned HTTP 200 with 120 bytes of its own. `reuseExistingServer` trusted it, so all 8 specs loaded a foreign page and failed on `locator.waitFor` timeouts — a **phantom regression I then investigated at length**, treating an environment artefact as a code defect. | A check performed once does not stay true. Anything that can invalidate it — a Docker restart, a branch switch, a port change — means re-run it, not assume it. And "I know this rule" is not the same as obeying it, so make the harness enforce it where you can: `reuseExistingServer` is now `false`, turning a squatted port into a loud startup failure instead of a quiet wrong-target run. |
 
 ## Hard rules
 
@@ -107,6 +110,21 @@ detail lives in the tables above; here is only the rule and its trigger.
   inserted block pure ASCII. Currently `02a-schema.md` is the **only** file in `docs/` that
   fails that test; re-run the check before editing any doc, not just this one. See
   "Schema-green is not integration-green" for the sibling lesson: the diff *shape* is the tell.
+- **Never round-trip a file through PowerShell. Use the edit/write tools.** Trigger: any file edit.
+  Run: `git diff --numstat <file>` afterwards — a docs append is roughly additive, and a rewrite
+  shows a large delete ratio. This bans `Get-Content -Raw` + `Set-Content`, `Add-Content`,
+  `[System.IO.File]::ReadAllText`/`WriteAllText`, and `WriteAllLines` — the .NET overloads are the
+  same hazard as the cmdlets, and using them instead is not a way around the rule. Two separate
+  reasons, both learned the hard way:
+  - **Encoding.** `Set-Content` on PowerShell 5.1 defaults to a code page that mangles `—`, `→`
+    and `’`. `[System.IO.File]::WriteAllText(path, text)` without an explicit encoding writes
+    UTF-8 **without** BOM and will strip one. Both silently rewrite the whole file.
+  - **Diff shape.** Even when the bytes survive, a read-modify-write is invisible as an edit and
+    destroys concurrent changes, which is how the `docs/07` append was reverted and redone.
+  Provenance matters: `notes.md` already recorded this after losing `docs/07-session-log.md` on
+  2026-10-06, and the repeat on 2026-10-16 used the .NET overloads specifically because the rule
+  named `Set-Content` and not the class of operation. A rule phrased around one spelling is not a
+  rule.
 - **Restore with `git checkout` before re-applying, and take the backup BEFORE the mutation.**
   Two self-inflicted losses in one session: a restore script that read a file into a PowerShell
   variable, had the variable come back null, and then wrote null over the source; and a
@@ -157,10 +175,18 @@ detail lives in the tables above; here is only the rule and its trigger.
   handler "works". Run: curl it — `GET /api/cron/enqueue` with the cron secret, then
   `/api/cron/process`, then count the rows the feature is supposed to produce. Pointer: this is
   the same rule as the feed's `.000Z` fixtures and the stale remote, one layer up: a unit suite
-  proves the code agrees with itself, a curl proves it agrees with the world. Also kill the old
-  listener first (`Get-NetTCPConnection -LocalPort 3000` → `Stop-Process -Force`) — a
-  `CloseMainWindow()` on a background `pnpm start` silently leaves it running, and you end up
-  testing the previous build and reading its output as your fix's.
+  proves the code agrees with itself, a curl proves it agrees with the world.
+- **Before any run that needs a server, check that the thing on the port is yours.** Trigger:
+  `pnpm dev`, `pnpm start`, **or `pnpm exec playwright test`** — anything that binds or *reuses*
+  localhost:3000. Run: `Get-NetTCPConnection -LocalPort 3000 -State Listen`, then confirm the owning
+  process is the `next dev` you started; otherwise free it first. **Re-check after anything that
+  restarts Docker, and do not carry a check forward across such a change** — the whole point is
+  that it goes stale. Why this is separate from the rule above: `reuseExistingServer` cannot tell
+  *what* is answering on 3000, so a foreign listener turns every assertion into a test of the wrong
+  server and the failure looks exactly like a code regression.
+  Pointer: `playwright.config.ts` now sets `reuseExistingServer: false`, so a squatted port fails
+  loudly at webServer startup instead. The config now enforces the rule; the check is still yours to
+  run before a manual curl.
 - **`"use server"` files export async functions and nothing else.** Trigger: exporting a const,
   type re-export or helper from any file with the `"use server"` directive. Run: `pnpm build` —
   typecheck and lint both pass, because this is a *Next* rule, not a TypeScript one, so it only
@@ -299,3 +325,39 @@ detail lives in the tables above; here is only the rule and its trigger.
 
 - **One source of truth per setting.** A value edited in N places is wrong in at least one;
   give it one owner and assert the rest derive from it.
+
+### Schema
+
+- **A snapshot column is not a fallback while its FK still cascades.** Trigger: any table holding a
+  `*_snapshot jsonb` alongside a foreign key to the live row (check `applications.job_id`). Run:
+  `pnpm vitest run tests/e2e/tracker.spec.ts -t "hard-deleting"` after changing either. `job_id` is
+  `on delete cascade`, so hard-deleting a job removes the application and `job_snapshot` never gets
+  to render — which is the whole stated purpose of X-16. Production avoids it only because jobs are
+  expired via `status`, never `DELETE`d, so the conflict is invisible in normal use. An E2E spec
+  asserting the snapshot fallback fails against correct code; assert the cascade instead and record
+  the conflict. Relaxing the FK to `on delete set null` is a schema change and needs asking.
+
+- **A `SECURITY DEFINER` function that writes a row must filter on `user_id = auth.uid()`
+  explicitly.** Trigger: any definer function taking a row id. Run:
+  `pnpm vitest run tests/integration/move-application.db.test.ts`. Definer bypasses RLS, so the
+  policy does not protect it, and Supabase's `ALTER DEFAULT PRIVILEGES` grants EXECUTE to `anon`.
+  Report "not found" for unowned *and* missing rows so the function is not an existence oracle.
+
+### UI behaviour
+
+- **A server action that rejects must say so.** Trigger: any `await someAction()` whose result is
+  checked. Run: a test that asserts the failure path renders `role="alert"`. A rejected action never
+  assigns `result`, so the branch that reports `{ok:false}` is never reached and the UI looks like
+  the click did nothing — silent, and indistinguishable from a slow render. Wrap the call and
+  `catch`.
+
+- **A stage/pipeline rule lives in SQL, mirrored in TS only for the UI, and the two are pinned.**
+  Trigger: duplicating any rule that SQL enforces (`move_application`'s transitions). Run:
+  `pnpm vitest run tests/unit/application-stages.test.ts`, which parses the `raise exception`
+  guards out of the migration. Read the guard's direction carefully — `to_stage not in (...)`
+  **raises**, so the listed values are the permitted set.
+
+- **A `CREATE OR REPLACE FUNCTION` must reproduce the parameter list exactly, order included.**
+  Trigger: replacing an existing function. Run: `pnpm db:reset` and confirm the migration applied.
+  A different order does not replace — it adds an overload and leaves the original callable. A
+  defaulted parameter in the wrong position fails outright (SQLSTATE 42P13).

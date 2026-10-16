@@ -75,6 +75,16 @@ const isExternal = !/^https?:\/\/localhost(:\d+)?/.test(baseURL);
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  // `pnpm dev` compiles routes on demand, and a cold compile of a server component can exceed
+  // Playwright's 5s default `expect` budget. The symptom is not a slow assertion, it is a
+  // **misleading** one: `/applications` does redirect a signed-out visitor, verified independently
+  // with curl, but `expect(page).toHaveURL(/\/login\?next=/)` timed out while the compile was
+  // still in flight and reported the page as never redirecting.
+  //
+  // 15s is generous for a warm server and still fails fast on a genuinely broken assertion. The
+  // durable fix is running e2e against `pnpm build && pnpm start`, which needs a build step in CI;
+  // until then this keeps a dev-server artefact out of the results.
+  expect: { timeout: 15_000 },
   // Runs once per invocation, in the parent process, before workers fork. This is where the
   // orphan-user sweep lives: doing it in a `beforeAll` meant every parallel worker ran it, and
   // they deleted each other's test users mid-test. See `tests/e2e/support/global-setup.ts`.
@@ -109,7 +119,28 @@ export default defineConfig({
         webServer: {
           command: "pnpm dev",
           url: "http://localhost:3000",
-          reuseExistingServer: !process.env.CI,
+          // Always false, deliberately — this used to be `!process.env.CI`.
+          //
+          // With `true`, Playwright boots nothing when anything already answers on 3000, and it
+          // cannot tell *what* is answering. Twice that has been a foreign process, and the
+          // failure is silent: the tests load the wrong server and fail as if the code regressed.
+          //
+          //   2026-10-16: `reactive-resume-app-1` (an unrelated project) published
+          //   127.0.0.1:3000 when Docker Desktop restarted. It returned HTTP 200 with 120 bytes of
+          //   its own. All 8 tracker specs failed on `locator.waitFor` timeouts, which read
+          //   exactly like "the tracker I just wrote is broken" — and cost a long investigation
+          //   chasing a regression that did not exist.
+          //
+          // `false` inverts that: if 3000 is squatted, `pnpm dev` cannot bind and Playwright
+          // reports the webServer failing to start. A loud, correct failure at setup, instead of a
+          // quiet wrong-target run. It costs the convenience of reusing an already-running
+          // `pnpm dev`, which is the right trade against three recorded incidents about stale
+          // listeners (`notes.md`, "Execute the feature, don't just compile it").
+          //
+          // If you *do* want a warm server, prove it is this app first:
+          //   Get-NetTCPConnection -LocalPort 3000 -State Listen
+          // and check the owning process is a `next dev` you started.
+          reuseExistingServer: false,
           timeout: 120_000,
         },
       }),
