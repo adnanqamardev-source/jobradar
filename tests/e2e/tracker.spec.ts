@@ -171,22 +171,14 @@ test.describe("the application tracker", () => {
     await expect(column(page, "Interview")).toContainText("Nothing in Interview yet.");
   });
 
-  test("hard-deleting a job cascades to the application", async ({ page, e2eUser }) => {
-    // This asserts the opposite of what the X-16 note implies, and that is deliberate.
+  test("a deleted job survives on its snapshot", async ({ page, e2eUser }) => {
+    // docs/03 §5.2: `job_snapshot` keeps the tracker record intact when the job is deleted. That
+    // was not true until 0016: `job_id` was `on delete cascade`, so deleting a job deleted the
+    // application and the snapshot had nothing to render in. Production hid it because jobs are
+    // expired via `status`, never `DELETE`d.
     //
-    // `markApplied`'s header claims `job_snapshot` "keeps rendering the role after the source
-    // deletes it". But `applications.job_id references jobs(id) on delete cascade`, so a hard
-    // delete of the job **removes the application row** — the snapshot never gets the chance to
-    // render, because there is no longer anything to render it in.
-    //
-    // An earlier draft of this spec asserted the snapshot fallback and failed against a board that
-    // was behaving correctly. Production removes jobs by moving `status` to `expired` (see
-    // `lib/ingest/freshness.ts` and the `cleanup` task kind), not by `DELETE`, so the cascade is
-    // rarely reached in normal operation — which is exactly why the conflict is easy to miss.
-    //
-    // The board still reads `job_snapshot` when the embedded job is null, so it is correct the
-    // moment the FK is relaxed to `on delete set null`. Resolving that conflict is a schema change
-    // and needs sign-off; until then the honest assertion is the behaviour that exists.
+    // This test asserted the cascade for a while, because the cascade was what the schema
+    // actually did. It is the reason the conflict was found rather than shipped.
     const admin = adminClient();
     if (admin === null) throw new Error("no admin client");
 
@@ -203,18 +195,17 @@ test.describe("the application tracker", () => {
 
     await admin.from("jobs").delete().eq("id", jobId);
 
-    // Checked through the service role, so this is about the foreign key and not about whether a
-    // page happened to render.
-    const after = await admin.from("applications").select("id").eq("user_id", e2eUser.userId);
-    expect(
-      after.data,
-      "job_snapshot cannot survive a hard delete while job_id is on delete cascade",
-    ).toEqual([]);
+    // The application survives, with job_id nulled rather than cascaded away.
+    const after = await admin.from("applications").select("id, job_id").eq("user_id", e2eUser.userId);
+    expect(after.data, "on delete set null must keep the application, not cascade it").toHaveLength(1);
+    expect(after.data?.[0]?.job_id, "the FK should null the id, not remove the row").toBeNull();
 
-    // And the board shows nothing for it, rather than showing something broken.
+    // And the board renders it from the snapshot, with no dead deep-link.
     await page.goto(BOARD);
-    await expect(column(page, "Applied")).toContainText("Nothing in Applied yet.");
-    await expect(page.getByText(title)).toHaveCount(0);
+    const card = column(page, "Applied").getByRole("article").filter({ hasText: title });
+    await expect(card).toContainText(title);
+    await expect(card).toContainText("This job is no longer available");
+    await expect(card.getByRole("link", { name: "View the job" })).toHaveCount(0);
   });
 
   test("the signed-out visitor is sent to sign in", async ({ page }) => {

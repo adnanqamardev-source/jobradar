@@ -3024,7 +3024,107 @@ runs against `next dev`.
 
 And a repeat of my own: mid-session I used `[System.IO.File]::ReadAllText` / `WriteAllText` for a
 two-line replacement when the 2026-10-06 row already said never round-trip a file through
-PowerShell. No damage — the file was new and BOM-less and `git diff` confirmed the em-dashes
-survived — but the rule named `Set-Content` and I found another spelling, which is how a documented
+PowerShell. No damage - the file was new and BOM-less and `git diff` confirmed the em-dashes
+survived - but the rule named `Set-Content` and I found another spelling, which is how a documented
 hazard survives. It is now a `### Process` rule naming the class of operation, with
 `git diff --numstat` as the check.
+
+---
+
+## 2026-10-18 — the snapshot conflict, resolved: `applications.job_id` on delete set null
+
+Last session ended by recording a conflict it could not fix without permission. `markApplied`
+claimed `job_snapshot` "keeps rendering the role after the source deletes it"; `applications.job_id`
+was `on delete cascade`, so hard-deleting a job deleted the application row and the snapshot had
+nothing left to render in. The tracker spec asserted the cascade, because the cascade was what the
+schema actually did, and `notes.md` said relaxing the FK "needs asking".
+
+### The change
+
+`0016_application_job_fk_set_null.sql` — `on delete cascade` becomes `on delete set null` and
+`job_id` drops `NOT NULL`. The nullability is not optional: PostgreSQL rejects `ON DELETE SET NULL`
+on a `NOT NULL` column, so dropping the constraint while keeping `not null` would have left the
+delete failing rather than doing the obvious wrong thing.
+
+Reviewed and signed off as a schema change before committing (AGENTS.md "Ask first"). The effects
+worth stating, because they are the ones a reviewer should check:
+
+- `unique (user_id, job_id)` stops constraining rows whose `job_id` is NULL, since PostgreSQL
+  treats NULLs as distinct. Acceptable rather than incidental — once the job is gone there is no
+  second "same job" to collide with. The live rows are still constrained, which is the half that
+  `markApplied`'s idempotency depends on, so that is pinned separately.
+- `v_ranked_jobs.applied` is `exists (... where a.job_id = j.id ...)`. Over a NULL that is NULL,
+  not true, so a snapshot-only row cannot mark an unrelated live job as applied. If someone
+  "fixes" that subquery with a coalesce, the third integration test is what notices.
+- `job_snapshot` is already `jsonb not null`, so a snapshot-only row always carries the fields the
+  board renders.
+
+### A guard that can fail, in both directions
+
+`tests/integration/application-snapshot.db.test.ts`, four cases against a live database. It is a
+database test and not a component test because the claim is about what the database is *permitted*
+to do, and a component test renders from whatever props it is handed — it would pass identically
+against `cascade` and `set null`, which is precisely the defect it exists to catch.
+
+Proven both ways rather than assumed. Green with the migration applied. Then the FK was reverted to
+`on delete cascade` **on the live database** and the suite was re-run:
+
+```
+FAIL  applications.job_id on delete set null (migration 0016) >
+      keeps the application and nulls job_id when the job is deleted
+AssertionError: deleting a job must not delete the application: expected null not to be null
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 passed (4)
+```
+
+Then `pnpm db:reset` to put it back. A guard that has only ever been seen green is decoration.
+
+### The mis-citation, which is the part worth keeping
+
+`mark-applied.ts` attributed the claim to **X-16**. Opening the row shows X-16 is about **résumé**
+deletion — `resume_version_id` going `on delete set null` and the application showing "Résumé
+removed". The job-deletion case is a different row entirely: "Deleted job while an application
+references it" in docs/03 §5.2. Nobody had noticed for the whole life of the claim, and that is
+the transferable part: **a comment that cites a doc row is making a checkable assertion, so the
+row has to be opened.** A plausible-looking `X-16` is worse than no citation, because it reads as
+verified. Corrected in `mark-applied.ts`, `queries/applications.ts`, the tracker spec and the
+integration test. Left in place inside `0016` itself — that migration is already applied to the
+remote, and editing an applied migration is the one thing this repo does not do.
+
+### Verification
+
+| gate | result |
+|---|---|
+| `pnpm typecheck` | exit 0 |
+| `pnpm lint` | exit 0 |
+| `pnpm test` | 52 files passed / **10 skipped**, 988 passed, **83 skipped** |
+| `pnpm db:reset` | 0001..0016 applied, exit 0 |
+| `pnpm exec vitest run tests/integration` (local, `TEST_SUPABASE_*` set) | **10 files, 83 passed, 0 skipped** |
+| `pnpm exec supabase migration list --linked` | remote has 0001..**0016** |
+
+The `pnpm test` row is the one worth pausing on: 83 skipped is not a pass, and the new integration
+test was in it. It only counts once `TEST_SUPABASE_URL` and friends are set against a database with
+the migrations applied. Same rule as the 9-skipped run in the previous session, and it is still the
+easiest gate in the repo to misread as green.
+
+`0016` was already on the remote when this session started — pushed before the commit that
+introduced the file was written, which `supabase migration list --linked` and
+`supabase gen types typescript --linked` both confirmed (`job_id: string | null` on the live
+schema). So there was nothing to apply, and the honest answer to "push the migration" was "it is
+already there". Worth recording because the instinct is to run `db push` regardless, and the way to
+know is to ask the remote's own history table first.
+
+### Not done, and not mine to decide
+
+**`SUPABASE_SERVICE_ROLE_KEY` in `.env.local` returns HTTP 401** against the remote, on every
+endpoint, while the publishable key works. That is a revoked key, not a permissions problem — and
+notes.md records a Supabase secret key being pasted into a chat transcript on 2026-10-05, with the
+rotation step named at the time. It appears the rotation never happened. Two consequences: any
+service-role write path in production is failing, and the E2E harness cannot reach the database at
+all, so `pnpm test:e2e` cannot be run locally until it is rotated
+(Supabase → Project Settings → API Keys). Rotating it is a dashboard action, not a repo change.
+
+**The tracker E2E spec was not run.** Same cause: `adminClient()` needs that key. The rewritten
+`a deleted job survives on its snapshot` case is the one most worth running in a browser, and it is
+unverified by execution. What *is* verified is that the underlying claim holds — four integration
+tests against the live schema, proven to fail against the old one.

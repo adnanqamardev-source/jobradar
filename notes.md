@@ -35,6 +35,8 @@ Approaches that didn't work — read before trying something similar.
 | 2026-10-14 | Shipped the feed with 26 green unit tests; it crashed on **100%** of real rows. `feedRowSchema` used `z.string().datetime()`, which rejects PostgREST's `timestamptz` output (`…+00:00`, 1–6 fractional digits). Same session also declared `skills` non-null on a nullable `text[]`, and `queryFeed` rethrew PostgREST errors into a server component that only handled one error case — so the whole thing surfaced as *"An error occurred in the Server Components render"*, a digest and nothing else. The user's browser console was the only symptom; I had "verified" it three sessions running. | **A client double returns the fixtures you hand it, so it can only ever confirm your assumptions.** 26 green tests proved the query *shape*; only the database proves the *values*. Any schema that validates a row coming back out of Postgres must be exercised by a `*.db.test.ts` running the real schema over real rows — and the double's fixtures must copy the format the database actually emits (`+00:00`, not `.000Z`), because otherwise the stub silently vouches for the wrong format. Second lesson: **an unhandled throw in a server component is a silent total outage.** Read paths return a typed error the page renders; they do not rethrow, because "digest only" is the most expensive possible failure mode. |
 | 2026-10-14 | Three self-inflicted traps while writing the job-detail page, each caught by a different tool rather than by reading. (1) Wrote a regex character class containing a **literal NUL byte**, which made the file read as binary — `Read`/`Grep`/`Edit` all refused it and the `edit` tool could not match its own line. (2) `close === -1` on a `RegExp.exec` result, comparing a match array to a number: always false, so `close.index` threw a TypeError on every unterminated `<script>` — i.e. every truncated scrape, on the page the sanitiser exists to protect. (3) Asserted `expect(getByRole(...)).toBeUndefined()` in three places; `getByRole` **throws** when nothing matches, so the test would have passed for entirely the wrong reason. | **Never put a literal control character in a source file** — build the range from `String.fromCharCode` or use `\u` escapes; a literal NUL is invisible in review and turns the file into a binary blob no tool can edit. **Let `tsc` police your comparisons**: `exec()` returns `T \| null`, so `=== -1` and `close.index` are errors TS will name for you — read the compiler output rather than pattern-matching on `-1`. And **assert absence with `queryBy…`, never `getBy…`**; `getByRole` throwing is a pass-looking failure mode, the same class as the stub that agrees with anything. |
 
+| 2026-10-18 | A migration was **already on the remote** and `supabase db push --dry-run` reported `"upToDate":true` with an empty pending list. I nearly pushed anyway, and then spent several calls hunting for a Postgres password to confirm the FK's *action* rather than its existence. There was no password in the environment, none in `supabase/.temp/`, and none in `.env.local`. | `supabase migration list` and `db push --dry-run` read `supabase_migrations.schema_migrations` on the remote — that is the **authority** on what is applied, and it uses the credential in Windows Credential Manager, so it works when the project's own keys do not. For what the schema *is* rather than what was *recorded*, `supabase gen types typescript --linked --schema public > tmp.ts` is read-only, needs no secret in hand, and answers nullability outright (`job_id: string | null`). Reach for it instead of hunting for a password. Corollary: a stale `sb_secret_` service key 401s against `/rest/v1/` **and** makes PostgREST's OpenAPI route return "Secret API key required" — that is a revoked key, not a permissions problem, and it means the e2e harness cannot reach the database at all. |
+
 ## Broken loops
 
 Repeating the same mistake, or shipping something broken while claiming it worked.
@@ -330,12 +332,18 @@ detail lives in the tables above; here is only the rule and its trigger.
 
 - **A snapshot column is not a fallback while its FK still cascades.** Trigger: any table holding a
   `*_snapshot jsonb` alongside a foreign key to the live row (check `applications.job_id`). Run:
-  `pnpm vitest run tests/e2e/tracker.spec.ts -t "hard-deleting"` after changing either. `job_id` is
-  `on delete cascade`, so hard-deleting a job removes the application and `job_snapshot` never gets
-  to render — which is the whole stated purpose of X-16. Production avoids it only because jobs are
-  expired via `status`, never `DELETE`d, so the conflict is invisible in normal use. An E2E spec
-  asserting the snapshot fallback fails against correct code; assert the cascade instead and record
-  the conflict. Relaxing the FK to `on delete set null` is a schema change and needs asking.
+  `pnpm vitest run tests/e2e/tracker.spec.ts -t "hard-deleting"` after changing either. **Resolved
+  2026-10-18 by `0016`** — `applications.job_id` is now `on delete set null`, so `job_snapshot`
+  really is the fallback. The rule survives as the *method*, because it is the class of defect that
+  hides: a documentation claim ("keeps rendering the role after the source deletes it") that the
+  schema made impossible, discovered only because someone wrote the obvious test and it failed
+  against correct code. Two things it cost: **the claim was cited to the wrong row.** `mark-applied.ts`
+  called it "X-16", but `docs/03` X-16 is *résumé* deletion; the job-deletion case is the
+  "Deleted job while an application references it" row in `docs/03` §5.2. A wrong anchor is a
+  claim nobody can check. **When a comment cites a doc row, open the row.** And when the fix is a
+  schema change, the gate has to be one the schema cannot fake — a component test renders from
+  whatever props it is handed, so it passes against `cascade` and `set null` alike; only
+  `*.db.test.ts` can tell the two apart.
 
 - **A `SECURITY DEFINER` function that writes a row must filter on `user_id = auth.uid()`
   explicitly.** Trigger: any definer function taking a row id. Run:

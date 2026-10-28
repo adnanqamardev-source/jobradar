@@ -155,16 +155,10 @@ export function TrackerBoard({ cards, events }: TrackerBoardProps) {
                       <p>{card.company ?? "Company unknown"}</p>
                       {card.salary !== null && <p>{card.salary}</p>}
 
-                      {/* The live job deep-links; a missing one falls back to the snapshot.
-
-                          Unreachable today: `applications.job_id` is `on delete cascade`, so a
-                          hard-deleted job takes the application row with it and this embed can
-                          never be null. Kept because TRK-004 requires the behaviour and the FK
-                          will need relaxing to `set null` for `job_snapshot` to mean anything —
-                          but it is NOT covered by a test today, because no test can reach it.
-                          `tests/e2e/tracker.spec.ts` asserts the cascade that makes it
-                          unreachable, so the conflict is recorded rather than hidden. */}
-                      {card.jobLive ? (
+                      {/* The live job deep-links; a deleted one renders from the snapshot. The snapshot branch is
+                          reachable since 0016 relaxed `job_id` to on delete set null — before that
+                          the FK cascaded the application away and this could never render. */}
+                      {card.jobLive && card.jobId !== null ? (
                         <Link href={`/jobs/${card.jobId}`}>View the job</Link>
                       ) : (
                         <p>This job is no longer available. Details kept from when you applied.</p>

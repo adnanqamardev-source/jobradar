@@ -6,12 +6,19 @@
  * TRK-002 renders. The modal that collects the applied date, résumé version
  * and notes is FE-110; this action is the write it performs.
  *
- * ## The snapshot is the point (X-16)
+ * ## The snapshot is the point (docs/03 §5.2)
  *
  * `job_snapshot` captures title/company/salary/source so the tracker keeps
  * rendering the role after the source deletes it or the job expires. The
  * action reads the job through the caller's own client and snapshots the
  * display fields — never the whole row, and never `description_html`.
+ *
+ * The anchor is the "Deleted job while an application references it" row of
+ * docs/03 §5.2 (Failure-point playbook). It used to be cited as "X-16", which
+ * is a different row about **résumé** deletion — a wrong anchor is a claim
+ * nobody can check. And until `0016` this was a claim the schema made
+ * impossible: `job_id` was `on delete cascade`, so deleting the job deleted
+ * the application and the snapshot had nothing left to render in.
  *
  * ## Idempotency
  *
@@ -50,7 +57,7 @@ import type { FeedActionResult } from "./save-job";
 
 /**
  * The snapshot source row, validated before it is written into
- * `applications.job_snapshot` (X-16). The Supabase client is untyped (no
+ * `applications.job_snapshot` (docs/03 §5.2). The Supabase client is untyped (no
  * database generic), so without this the snapshot would be an unvalidated
  * `GenericStringError` cast into jsonb.
  */

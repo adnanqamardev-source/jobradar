@@ -17,8 +17,10 @@
  *
  * ## `job_snapshot` is the fallback, not a convenience
  *
- * `applications.job_snapshot` captures title/company/salary (X-16) so a tracker row still renders
- * after the source deletes the job. `queryApplications` reads the live job when it exists and
+ * `applications.job_snapshot` captures title/company/salary (docs/03 §5.2, "Deleted job while an
+ * application references it") so a tracker row still renders after the source deletes the job —
+ * which only became true when `0016` relaxed `job_id` to `on delete set null`.
+ * `queryApplications` reads the live job when it exists and
  * falls back to the snapshot when it does not, so the board shows one consistent card rather
  * than a row with half its fields missing.
  */
@@ -39,7 +41,14 @@ const jobSnapshotSchema = z.object({
 
 export interface TrackerCard {
   applicationId: string;
-  jobId: string;
+  /**
+   * Null once the job has been deleted — `applications.job_id` is `on delete set null` (0016),
+   * which is what lets `jobSnapshot` be the fallback docs/03 §5.2 describes.
+   *
+   * Non-null whenever `jobLive` is true, because that flag *is* the presence of the embedded job
+   * row this id points at. The two are read together, never independently.
+   */
+  jobId: string | null;
   stage: z.infer<typeof applicationStageSchema>;
   appliedAt: string | null;
   nextActionAt: string | null;
@@ -54,7 +63,9 @@ export interface TrackerCard {
 
 const cardRowSchema = z.object({
   id: z.string().uuid(),
-  job_id: z.string().uuid(),
+  // Nullable since 0016: a deleted job leaves the application standing with job_id null. The
+  // embed is what actually tells the UI which case it is in.
+  job_id: z.string().uuid().nullable(),
   stage: applicationStageSchema,
   applied_at: dbTimestampSchema.nullable(),
   next_action_at: dbTimestampSchema.nullable(),

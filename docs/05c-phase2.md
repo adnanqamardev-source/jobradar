@@ -195,7 +195,7 @@ Drawer with timeline, notes, follow-up date, résumé link, and original posting
 **Done when:**
 - [ ] Shows stage history in reverse-chronological order
 - [ ] Notes and `next_action_at` editable inline with autosave + error toast
-- [ ] Deep-links to the job detail; handles a deleted job via `job_snapshot`
+- [x] Deep-links to the job detail; handles a deleted job via `job_snapshot` (2026-10-18 — the fallback only became reachable when `0016` relaxed `job_id` to `on delete set null`; previously `on delete cascade` deleted the application along with the job)
 - [ ] Focus trapped in drawer; `Escape` closes and returns focus to the card
 
 ---

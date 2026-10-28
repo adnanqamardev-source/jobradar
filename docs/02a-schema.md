@@ -367,7 +367,7 @@ Indexes: `(user_id, final_score desc)` where `final_score >= 60`; `(job_id)`.
 |---|---|---|
 | `id` | `uuid` PK | |
 | `user_id` | `uuid` FK ? profiles cascade | |
-| `job_id` | `uuid` FK ? jobs cascade | unique per user |
+| `job_id` | `uuid` FK ? jobs, on delete set null (0016) | nullable since 0016; unique per user |
 | `stage` | `app_stage default 'applied'` | |
 | `applied_at` | `timestamptz default now()` | |
 | `resume_version_id` | `uuid` FK ? resume_versions, set null | |
@@ -377,7 +377,7 @@ Indexes: `(user_id, final_score desc)` where `final_score >= 60`; `(job_id)`.
 | `next_action_at` | `timestamptz` | follow-up (E5) |
 | `job_snapshot` | `jsonb` | title/company/salary at apply time — survives source deletion |
 | `created_at` / `updated_at` | `timestamptz` | |
-| unique | `(user_id, job_id)` | prevents duplicate applications |
+| unique | `(user_id, job_id)` | prevents duplicate applications for a live job. NULL job_id rows are unconstrained, since Postgres treats NULLs as distinct - correct, because once the job is gone there is no second application to collide with |
 
 **`application_events`**
 
